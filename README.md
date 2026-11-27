@@ -1,13 +1,71 @@
 # SDLC AI Toolkit
 
-Agents, skills and templates that make GitHub Copilot in VS Code run your
-team's SDLC on a Jira ticket. It reads the ticket, analyses the impact across
-every repo, plans, waits for your approval, implements, runs the quality gate,
-makes disciplined commits across repos, writes one consolidated summary,
-opens cross-linked GitLab MRs and updates Jira. It is built for Python/Zope
-teams.
+Agents, skills, templates and a helper CLI that make GitHub Copilot in VS Code
+run your team's SDLC on a Jira ticket, across **many repositories at once**.
 
-## Install (2 minutes)
+Give it a ticket key (e.g. `PROJ-123`). It reads the ticket, analyses the
+impact across every repo, plans, **waits for your approval**, implements,
+runs the quality gate, makes disciplined commits, writes one consolidated
+summary, opens cross-linked GitLab MRs and updates Jira. It is built for
+Python / Zope / SQLAlchemy backends with Angular frontends.
+
+## Contents
+
+- [Features](#features)
+- [How the workflow runs](#how-the-workflow-runs)
+- [Install](#install)
+- [Use](#use)
+- [Templates](#templates)
+- [Configuration](#configuration)
+- [Branch and commit conventions](#branch-and-commit-conventions)
+- [Impact analysis and Orbit](#impact-analysis-and-orbit)
+- [Repository layout](#repository-layout)
+- [Documentation](#documentation)
+- [Requirements](#requirements)
+- [Development](#development)
+
+## Features
+
+- **Six agents**: SDLC Orchestrator (start here), Ticket Analyst, Impact
+  Analyst, Implementer, Quality Gate and Release Scribe.
+- **Ten skills**: procedures for each stage plus the team's Python/Zope
+  standards and checklists.
+- **Human checkpoints**: approval of the plan, confirmation before editing
+  each repo, and confirmation before pushing, opening MRs or updating Jira.
+  Nothing is ever merged or force-pushed.
+- **Multi-repo aware**: one ticket can touch several repos; commits, quality
+  results and MRs are collected into one consolidated summary and cross-linked.
+- **Full-stack impact analysis**: whole-method scope (one changed line means
+  the whole method is analysed), endpoints and screens traced from Angular and
+  Python/SQLAlchemy code, and every XML configuration reference listed.
+- **QA hand-off**: after developer validation the ticket gets impacted
+  screens, endpoints, use cases to validate, regression areas and test data.
+- **Orbit code graph**: a local GitLab Orbit knowledge graph, one per
+  workspace folder, backs callers, tests and reference searches.
+- **Editable templates** for every output (Jira comments, MR text, commits,
+  reports, Teams update).
+- **Deterministic helper CLI** (`scripts/sdlc.py`) for the parts that must be
+  exact: commit rules, branch names, quality checks, commit collection.
+- **Quality gate** driven by config: lint, format, types, security scan and
+  tests, with missing tools reported as missing, never as passed.
+- **Git hooks** (optional) that reject commits breaking the team rules.
+- **No service to run**: Jira and GitLab connect through MCP servers using
+  your own sign-in.
+
+## How the workflow runs
+
+| Stage | Agent | Output |
+|-------|-------|--------|
+| 1. Understand | Ticket Analyst | understanding summary (description, comments, links, acceptance criteria, open questions) |
+| 2. Analyse | Impact Analyst | impact analysis across all repos |
+| 3. Plan | Impact Analyst | implementation plan, then **stops for your approval** |
+| 4. Implement | Implementer | test-first changes on the current branch, after per-repo confirmation |
+| 5. Quality gate | Quality Gate | lint, format, type, security and test report |
+| 6. Release | Release Scribe | atomic commits, consolidated summary, MRs, Jira updates |
+
+You can also run any single stage on its own.
+
+## Install
 
 Open this repo in VS Code and ask Copilot Chat:
 
@@ -15,36 +73,154 @@ Open this repo in VS Code and ask Copilot Chat:
 /install-sdlc-toolkit
 ```
 
-or run it yourself:
+or run it yourself from the repository root:
 
 ```bash
 python3 install.py --workspace ~/work          # Windows: py -3 install.py --workspace C:\work
 ```
 
-Then follow the **ACTION REQUIRED** list it prints (sign in to Jira and
-GitLab once, then reload VS Code). The list is also saved to
+Optionally pass your team values:
+
+```bash
+python3 install.py --set jira.site=https://<site>.atlassian.net \
+  --set jira.project_keys=PROJ --set gitlab.group=<group> --workspace ~/work
+```
+
+The installer copies agents and skills to `~/.copilot`, writes the MCP server
+config (Jira, GitLab, Orbit), installs the Orbit CLI through npm when Node.js
+is available, and prints an **ACTION REQUIRED** list (sign in to Jira and
+GitLab once, reload VS Code). That list is also saved to
 `~/.copilot/sdlc-toolkit/MANUAL_STEPS.md`.
+
+Other installer options:
+
+```bash
+python3 install.py --dry-run      # show what would change
+python3 install.py --no-hooks     # skip git hook installation
+python3 install.py --uninstall    # remove everything the toolkit installed
+```
+
+Re-run the installer after changing config, templates, agents or skills.
+Full instructions: **[docs/USER_MANUAL.md](docs/USER_MANUAL.md)**
+(sections 2 to 4 cover prerequisites, install and the manual steps).
 
 ## Use
 
-In Copilot Chat pick **SDLC Orchestrator** and type a ticket key, e.g.
-`PROJ-123`. Full guide: **[docs/USER_MANUAL.md](docs/USER_MANUAL.md)**.
+In Copilot Chat pick **SDLC Orchestrator** and type a ticket key, for example
+`PROJ-123`. Skills are also slash commands, such as `/jira-ticket-digest`
+or `/impact-analysis`.
+
+Helper CLI examples (installed at `~/.copilot/sdlc-toolkit/scripts/sdlc.py`):
+
+```bash
+python3 sdlc.py doctor                                   # check the installation
+python3 sdlc.py repos                                    # repos in the workspace
+python3 sdlc.py branch-name PROJ-123 --type bugfix --user kumar
+python3 sdlc.py check-commit --message "PROJ-123: fix lookup"
+python3 sdlc.py quality PROJ-123                         # run the quality gate
+python3 sdlc.py summary PROJ-123                         # render summary, MR and Teams text
+python3 sdlc.py orbit index                              # code graph for this workspace
+```
+
+## Templates
+
+Every artefact the agents produce is shaped by a template in
+[templates/](templates). Edit the wording or sections, re-run the installer,
+and every agent follows the new format. Overrides can also live per repo or
+per workspace in `.sdlc/templates/`.
+
+| Template | Purpose |
+|----------|---------|
+| `ticket-understanding.md` | Understanding summary of the ticket |
+| `impact-analysis.md` | Impact analysis: change trace, endpoints, XML references, risk |
+| `implementation-plan.md` | Plan per repo; the approval gate |
+| `commit-message.txt` | Commit message format |
+| `quality-report.md` | Quality gate results |
+| `mr-description.md` | GitLab merge request description |
+| `jira-progress-comment.md` | Short progress comments on the ticket |
+| `jira-impact-comment.md` | QA and stakeholder hand-off: screens, endpoints, use cases |
+| `consolidated-summary.md` | One summary across all repos and MRs |
+| `teams-update.md` | Text to paste in Teams or Outlook |
+
+Placeholder syntax and precedence rules: [templates/README.md](templates/README.md).
+
+## Configuration
+
+Team settings live in [config/toolkit.ini](config/toolkit.ini). Personal
+overrides are saved by the installer to
+`~/.copilot/sdlc-toolkit/toolkit.local.ini`.
+
+| Section | Controls |
+|---------|----------|
+| `[team]` | Team name and general settings |
+| `[jira]` | Site, project keys, update frequency, workflow transitions |
+| `[gitlab]` | Group, default target branch |
+| `[mcp]` | MCP server endpoints |
+| `[orbit]` | Orbit CLI install, indexing, hosted MCP, telemetry |
+| `[git]` | Branch convention, commit rules, protected branches |
+| `[quality]` | Lint, format, type, security and test commands |
+| `[workspace]` | Workspace folder, repo discovery depth, work dir |
+| `[safety]` | Steps that need confirmation |
+| `[notify]` | Teams / Outlook summary |
+
+## Branch and commit conventions
+
+Branches follow `<type>/<username>/<ticket_id>` with types `feature`,
+`bugfix`, `spike` (`spike/<poc_name>/<ticket_id>`), `refactor` and `chore`,
+for example `feature/kumar/JIVA70-1919`. By default the agents use each
+repo's **current branch** and ask before editing files in each repo. Commit
+messages carry the ticket key and are validated by `sdlc.py check-commit` and
+the optional git hooks. Protected branches are never committed to.
+
+## Impact analysis and Orbit
+
+Impact analysis uses the [GitLab Orbit CLI](https://docs.gitlab.com/orbit/cli/)
+for callers, imports, tests and references. Each workspace folder (which may
+hold several repos) has its **own** graph in `<folder>/.sdlc/orbit`, so
+different products or versions never mix. Details: section 15 of the
+[user manual](docs/USER_MANUAL.md) and the checklist
+[fullstack-trace-checklist.md](skills/impact-analysis/references/fullstack-trace-checklist.md).
 
 ## Repository layout
 
 | Path | What | Who edits |
 |------|------|-----------|
-| `config/toolkit.ini` | Team settings: Jira, GitLab, commit rules, quality commands, update frequency | Team lead |
-| `templates/` | Formats for Jira comments, impact analysis, plan, commits, quality report, MR, summary, Teams text | Team |
-| `agents/` | 6 custom agents (Orchestrator + specialists) | Maintainers |
-| `skills/` | 10 skills (procedures + Zope standards and checklists) | Maintainers |
+| `config/toolkit.ini` | Team settings | Team lead |
+| `templates/` | Output formats | Team |
+| `agents/` | 6 custom agents | Maintainers |
+| `skills/` | 10 skills (procedures, Zope standards, checklists) | Maintainers |
 | `vendor/awesome-copilot/` | Reused community skills and agents (MIT, pinned) | `scripts/update_vendor.py` |
-| `scripts/sdlc.py` | Deterministic helper CLI (config, templates, quality gate, commit checks, multi-repo collect and summary, hooks) | Maintainers |
-| `install.py` | User-level installer, upgrade and uninstall | — |
-| `tests/` | `python3 -m unittest discover -s tests` | — |
+| `scripts/sdlc.py` | Deterministic helper CLI | Maintainers |
+| `install.py` | User-level installer, upgrade and uninstall | Maintainers |
+| `docs/` | User manual and maintainer notes | Maintainers |
+| `tests/` | Unit tests | Maintainers |
+| `.github/` | Copilot instructions and the install prompt | Maintainers |
+| `AGENTS.md` | Instructions for AI agents working in this repo | Maintainers |
+
+## Documentation
+
+- [docs/USER_MANUAL.md](docs/USER_MANUAL.md): install, first ticket, config
+  reference, troubleshooting, safety rules.
+- [docs/TOOLKIT_NOTES.md](docs/TOOLKIT_NOTES.md): architecture, connectivity
+  design, Orbit integration and the fine-tuning backlog.
+- [templates/README.md](templates/README.md): template syntax and precedence.
+- [AGENTS.md](AGENTS.md): how AI agents should install and change this repo.
 
 ## Requirements
 
-You need VS Code with GitHub Copilot Chat (agent mode), Python 3.8+ and Git.
-You also need Jira Cloud and GitLab accounts. The installer itself uses only
-the Python standard library.
+- VS Code with GitHub Copilot Chat (agent mode)
+- Python 3.8+ and Git
+- Jira Cloud and GitLab accounts
+- Node.js, optional, to auto-install the Orbit CLI
+
+The installer itself uses only the Python standard library. For Copilot
+Business or Enterprise, your org admin must allow MCP servers in Copilot.
+
+## Development
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+Keep the `@@SDLC@@` and `@@TOOLKIT_HOME@@` placeholders in agents and skills;
+the installer replaces them. After changes, re-run `python3 install.py`.
