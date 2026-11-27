@@ -1,0 +1,14 @@
+{{type}}({{scope}}): {{ticket_key}} {{summary}}
+
+{{body}}
+
+Refs: {{ticket_key}}
+{{#if breaking_change}}BREAKING CHANGE: {{breaking_change}}
+{{/if}}{{#if co_authors}}{{co_authors}}
+{{/if}}
+<!-- guidance:
+- Subject: imperative mood, no trailing period, <= max_subject_length (config), lower-case after the key.
+- type: one of commit_types in config. scope: package or module, e.g. catalog, browser, zcml.
+- body: WHY the change was needed and anything non-obvious about HOW. Wrap at 72 chars.
+- One logical change per commit. Tests go in the same commit as the code they test.
+- Never mention AI tools in the subject. -->
