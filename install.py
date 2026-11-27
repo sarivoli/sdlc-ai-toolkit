@@ -6,9 +6,12 @@
     python install.py --set jira.site=https://acme.atlassian.net --set gitlab.group=acme
     python install.py --workspace ~/work      folder that holds your repos
     python install.py --no-hooks      don't add git hooks to workspace repos
+    python install.py --target all    also install into Claude Code, Cursor, Antigravity, Gemini CLI, Codex
     python install.py --uninstall     remove everything this installer added
+Or one line: curl -fsSL https://raw.githubusercontent.com/sarivoli/sdlc-ai-toolkit/main/install.sh | bash
 
-What it does (user level, so it works in every VS Code workspace):
+What it does for GitHub Copilot (user level, so it works in every workspace); other
+editors get the same skills/agents/MCP servers in their own folders (see installer_targets.py):
   ~/.copilot/agents/          custom agents  (SDLC Orchestrator + specialists + reused community agents)
   ~/.copilot/skills/          agent skills   (toolkit skills + reused awesome-copilot skills)
   ~/.copilot/sdlc-toolkit/    config, templates, helper CLI, MANUAL_STEPS.md
@@ -29,6 +32,8 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import installer_targets as T
 
 SRC = Path(__file__).resolve().parent
 VERSION = (SRC / "VERSION").read_text(encoding="utf-8").strip() if (SRC / "VERSION").exists() else "dev"
@@ -51,9 +56,23 @@ class Installer:
         self.old_manifest = self._read_json(self.manifest_path)
         self.manifest = {"version": VERSION, "installed_at": _dt.datetime.now().isoformat(timespec="seconds"),
                          "skills": [], "agents": [], "mcp_servers": [], "vscode_mcp_servers": [], "hooks": []}
+        self.targets = self._resolve_targets(getattr(args, "target", None) or "auto")
         self.done: list[str] = []
         self.manual: list[str] = []
         self.notes: list[str] = []
+
+    @staticmethod
+    def _resolve_targets(spec: str) -> list:
+        spec = spec.strip().lower()
+        if spec == "auto":
+            return T.detect()
+        if spec == "all":
+            return list(T.ALL)
+        names = [s.strip() for s in spec.split(",") if s.strip()]
+        bad = [n for n in names if n not in T.TARGETS]
+        if bad:
+            sys.exit(f"Unknown --target {', '.join(bad)}. Choose from: auto, all, {', '.join(T.ALL)}")
+        return names
 
     # ------------------------------------------------------------ utils
     @staticmethod
@@ -242,11 +261,11 @@ class Installer:
         for name, conf in servers.items():
             if name in block and block[name] != conf and name not in self.old_manifest.get(manifest_key, []):
                 self.notes.append(f"MCP server `{name}` already exists in {path} with different settings - kept yours. "
-                                  f"The agents expect a server named `{name}` ({conf['url']}).")
+                                  f"The agents expect a server named `{name}` ({T.server_url(conf)}).")
                 continue
             for other, oconf in block.items():
-                if other != name and isinstance(oconf, dict) and oconf.get("url") == conf["url"]:
-                    self.notes.append(f"You also have `{other}` pointing at {conf['url']}. You can remove it to avoid duplicate tools.")
+                if other != name and isinstance(oconf, dict) and T.server_url(oconf) == T.server_url(conf):
+                    self.notes.append(f"You also have `{other}` pointing at {T.server_url(conf)}. You can remove it to avoid duplicate tools.")
             block[name] = conf
             added.append(name)
         self._backup(path)
@@ -283,6 +302,93 @@ class Installer:
             "      Repeat for `gitlab`. Trust the servers if VS Code asks.\n"
             "      If they don't appear: run `MCP: Open User Configuration` and paste the two servers from\n"
             f"      {(self.copilot_home / 'mcp-config.json').as_posix()} under \"servers\".")
+
+    # ------------------------------------------------------------ other editors
+    def _is_ours(self, dst: Path, owned: list) -> bool:
+        if dst.name in owned:
+            return True
+        if dst.is_dir():
+            return (dst / MARKER).exists()
+        return MARKER in dst.read_text(encoding="utf-8", errors="ignore")[:600]
+
+    def install_other_targets(self, cp):
+        servers = self.mcp_servers(cp)
+        own_agents = sorted((SRC / "agents").glob("*.agent.md"))
+        ven_agents = sorted((SRC / "vendor" / "awesome-copilot" / "agents").glob("*.agent.md"))
+        names = T.name_map(own_agents + ven_agents)
+        skill_roots = [SRC / "skills", SRC / "vendor" / "awesome-copilot" / "skills"]
+        self.manifest["targets"] = {}
+        for tgt in self.targets:
+            if tgt == "copilot":
+                continue
+            spec = T.TARGETS[tgt]
+            old = self.old_manifest.get("targets", {}).get(tgt, {})
+            rec = {"skills": [], "agents": []}
+            sk_dir = spec["skills"]
+            adir_mode, adir = spec["agents"]
+
+            def put_skill(name: str, writer):
+                dst = sk_dir / name
+                if dst.exists() and not self._is_ours(dst, old.get("skills", [])):
+                    self.notes.append(f"[{tgt}] skill `{name}` already exists and is not ours - kept yours.")
+                    return
+                if not self.dry:
+                    if dst.exists():
+                        shutil.rmtree(dst)
+                    writer(dst)
+                    (dst / MARKER).write_text(f"installed by sdlc-ai-toolkit {VERSION}\n", encoding="utf-8")
+                rec["skills"].append(name)
+
+            def copy_skill(src: Path):
+                def w(dst: Path):
+                    shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+                    for md in dst.rglob("*.md"):
+                        md.write_text(self.substitute(md.read_text(encoding="utf-8")), encoding="utf-8", newline="\n")
+                return w
+
+            for root_dir in skill_roots:
+                for src in sorted(root_dir.glob("*")):
+                    if src.is_dir() and (src / "SKILL.md").exists():
+                        put_skill(src.name, copy_skill(src))
+            if adir_mode == "md":
+                for src in own_agents + ven_agents:
+                    sl, text = T.convert_agent(src, names, self.substitute(src.read_text(encoding="utf-8")))
+                    dst = adir / f"{sl}.md"
+                    if dst.exists() and not self._is_ours(dst, old.get("agents", [])):
+                        self.notes.append(f"[{tgt}] agent `{sl}` already exists and is not ours - kept yours.")
+                        continue
+                    self._write(dst, text.rstrip("\n") + f"\n\n<!-- {MARKER} {VERSION} -->\n")
+                    rec["agents"].append(dst.name)
+            elif adir_mode == "skills":
+                for src in own_agents:
+                    sl, text = T.convert_agent(src, names, self.substitute(src.read_text(encoding="utf-8")))
+                    put_skill(sl, lambda dst, text=text: (dst.mkdir(parents=True), (dst / "SKILL.md").write_text(text, encoding="utf-8", newline="\n")))
+            for kind, d in (("skills", sk_dir), ("agents", adir)):
+                if d is None:
+                    continue
+                for name in set(old.get(kind, [])) - set(rec[kind]):
+                    p = d / name
+                    if p.exists() and not self.dry:
+                        shutil.rmtree(p) if p.is_dir() else p.unlink()
+            path, key, shape = spec["mcp"]
+            if shape == "toml":
+                self._toml_mcp(path, servers, rec)
+            else:
+                self.merge_mcp(path, key, {n: T.shape_server(c, shape) for n, c in servers.items()}, f"mcp:{tgt}")
+            self.manifest["targets"][tgt] = rec
+            self.done.append(f"{spec['label']}: {len(rec['skills'])} skills, {len(rec['agents'])} agents -> {sk_dir.parent}")
+            self.manual.append(f"{spec['label']}: {spec['reload']}")
+
+    def _toml_mcp(self, path: Path, servers: dict, rec: dict):
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
+        new = T.toml_upsert(text, servers)
+        if new != text:
+            self._backup(path)
+            self._write(path, new)
+        mine = [n for n in servers if f'[mcp_servers."{n}"]' in new]
+        self.manifest["mcp:codex"] = mine
+        if mine:
+            self.done.append(f"MCP servers {', '.join(mine)} -> {path}")
 
     def install_orbit(self, cp, root: Path):
         if cp.get("orbit", "enabled", fallback="yes").lower() not in ("yes", "true", "1"):
@@ -341,9 +447,11 @@ class Installer:
                                "Missing tools are reported as 'missing', never as passed.")
 
     def finish(self):
-        self.manual.append("Reload VS Code (`Developer: Reload Window`). In Copilot Chat open the agent picker: you should see "
+        if "copilot" in self.targets:
+          self.manual.append("Reload VS Code (`Developer: Reload Window`). In Copilot Chat open the agent picker: you should see "
                            "**SDLC Orchestrator**. Type `/` to see the skills (e.g. `/jira-ticket-digest`).")
-        self.manual.append("Copilot Business/Enterprise: your org admin must allow **MCP servers in Copilot** (and agent mode) "
+        if "copilot" in self.targets:
+          self.manual.append("Copilot Business/Enterprise: your org admin must allow **MCP servers in Copilot** (and agent mode) "
                            "in GitHub organization Copilot policies, otherwise the Jira/GitLab tools stay disabled.")
         self.manual.append(f"Check everything at any time: `{self.sdlc_command()} doctor`")
         report = ["# SDLC AI Toolkit - installation report", "",
@@ -375,8 +483,10 @@ class Installer:
         self.apply_overrides()
         cp = self.effective_config()
         root = self.check_config(cp)
-        self.install_skills_agents()
-        self.install_mcp(cp)
+        if "copilot" in self.targets:
+            self.install_skills_agents()
+            self.install_mcp(cp)
+        self.install_other_targets(cp)
         self.install_orbit(cp, root)
         self.install_hooks(root)
         self.optional_tools()
@@ -393,6 +503,26 @@ class Installer:
                 p = self.copilot_home / kind / name
                 if p.exists():
                     shutil.rmtree(p) if p.is_dir() else p.unlink()
+        for tgt, rec in m.get("targets", {}).items():
+            spec = T.TARGETS.get(tgt)
+            if not spec:
+                continue
+            for kind, d in (("skills", spec["skills"]), ("agents", spec["agents"][1])):
+                for name in rec.get(kind, []):
+                    p = d / name if d else None
+                    if p and p.exists():
+                        shutil.rmtree(p) if p.is_dir() else p.unlink()
+            path, key, shape = spec["mcp"]
+            if shape == "toml":
+                if path.exists():
+                    path.write_text(T.toml_strip(path.read_text(encoding="utf-8")), encoding="utf-8")
+            else:
+                data = self._read_json(path)
+                if data.get(key):
+                    for name in m.get(f"mcp:{tgt}", []):
+                        data[key].pop(name, None)
+                    self._backup(path)
+                    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         for path, key, mk in ((self.copilot_home / "mcp-config.json", "mcpServers", "mcp_servers"),
                               ((self.vscode_user_dir() or Path("/nonexistent")) / "mcp.json", "servers", "vscode_mcp_servers")):
             data = self._read_json(path)
@@ -413,7 +543,7 @@ class Installer:
         if keep:
             self.home.mkdir(parents=True, exist_ok=True)
             local.write_text(keep, encoding="utf-8")
-        print("SDLC AI Toolkit removed (your toolkit.local.ini was kept). Reload VS Code.")
+        print("SDLC AI Toolkit removed (your toolkit.local.ini was kept). Restart your editor(s).")
 
 
 def main():
@@ -423,6 +553,9 @@ def main():
     ap.add_argument("--set", action="append", metavar="SECTION.KEY=VALUE", help="personal config override (repeatable)")
     ap.add_argument("--workspace", help="folder containing your repos")
     ap.add_argument("--no-hooks", action="store_true")
+    ap.add_argument("--target", default="auto", metavar="EDITORS",
+                    help="editors to install into: auto (default: Copilot + every editor found), all, or a comma list of "
+                         + ", ".join(T.ALL))
     ap.add_argument("--copilot-home", help=argparse.SUPPRESS)
     args = ap.parse_args()
     for stream in (sys.stdout, sys.stderr):

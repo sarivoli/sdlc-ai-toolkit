@@ -95,7 +95,25 @@ team configured in `[quality]`).
 
 ## 3. Install
 
-Clone the toolkit repo (your team keeps it in GitLab), open it in VS Code,
+**Quickest (no clone, any OS):** needs Git and Python 3.8+.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sarivoli/sdlc-ai-toolkit/main/install.sh | bash          # macOS / Linux / WSL
+irm https://raw.githubusercontent.com/sarivoli/sdlc-ai-toolkit/main/install.ps1 | iex                # Windows PowerShell
+```
+
+It clones to `~/.sdlc-ai-toolkit` and runs the installer; run it again to update.
+Add installer options with `bash -s -- --target all --workspace ~/work`.
+
+**Which editors?** `--target auto` (default) installs for GitHub Copilot and every
+editor found on the machine (Claude Code, Cursor, Antigravity, Gemini CLI, Codex CLI).
+Use `--target all` or a list such as `--target copilot,claude`. Editors without custom
+agents (Gemini CLI, Codex) get each agent as a skill. In Claude Code, subagents cannot
+start other subagents, so the orchestrator works step by step. After installing, restart
+the editor and sign in to the Atlassian and GitLab MCP servers in that editor.
+`--uninstall` removes every target.
+
+**From a clone** (your team may keep the repo in GitLab), open it in your editor,
 then use **one** of these:
 
 ### Option A — ask Copilot (recommended)

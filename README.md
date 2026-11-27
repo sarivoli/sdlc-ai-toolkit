@@ -72,15 +72,51 @@ You can also run any single stage on its own.
 
 ## Install
 
-Open this repo in VS Code and ask Copilot Chat:
+### One line, from the public URL (macOS, Linux, Windows)
 
-```
-/install-sdlc-toolkit
-```
-
-or run it yourself from the repository root:
+Needs only Git and Python 3.8+. The script clones the repo to `~/.sdlc-ai-toolkit`
+(re-running it updates) and runs the installer.
 
 ```bash
+# macOS / Linux / WSL
+curl -fsSL https://raw.githubusercontent.com/sarivoli/sdlc-ai-toolkit/main/install.sh | bash
+# pass installer options after "-s --"
+curl -fsSL https://raw.githubusercontent.com/sarivoli/sdlc-ai-toolkit/main/install.sh | bash -s -- --target all --workspace ~/work
+```
+
+```powershell
+# Windows PowerShell
+irm https://raw.githubusercontent.com/sarivoli/sdlc-ai-toolkit/main/install.ps1 | iex
+```
+
+Or just tell your AI editor: *"Clone https://github.com/sarivoli/sdlc-ai-toolkit and
+install it"* - [AGENTS.md](AGENTS.md) tells the agent what to run.
+
+### Supported editors
+
+By default (`--target auto`) the installer sets up GitHub Copilot plus every
+editor it finds on the machine. Choose explicitly with `--target all` or a list.
+
+| Target | Editor / CLI | Skills | Agents | MCP servers |
+|---|---|---|---|---|
+| `copilot` | VS Code + GitHub Copilot | `~/.copilot/skills` | `~/.copilot/agents` | VS Code `mcp.json`, `~/.copilot/mcp-config.json` |
+| `claude` | Claude Code | `~/.claude/skills` | `~/.claude/agents` | `~/.claude.json` |
+| `cursor` | Cursor | `~/.cursor/skills` | `~/.cursor/agents` | `~/.cursor/mcp.json` |
+| `antigravity` | Google Antigravity | `~/.gemini/config/skills` | `~/.gemini/config/agents` | `~/.gemini/config/mcp_config.json` |
+| `gemini` | Gemini CLI | `~/.gemini/skills` | installed as skills | `~/.gemini/settings.json` |
+| `codex` | OpenAI Codex CLI | `~/.codex/skills` | installed as skills | `~/.codex/config.toml` |
+
+Notes: skills use the open Agent Skills format, so they are copied as is; agents
+are converted to each editor's format. Editors without custom agents get each
+agent as a skill. Claude Code subagents cannot start other subagents, so the
+orchestrator hands over step by step there. Non-Copilot paths follow each
+editor's documentation and are best effort. Existing configs are merged and
+backed up; `--uninstall` removes only what the toolkit added.
+
+### From a clone
+
+```bash
+git clone https://github.com/sarivoli/sdlc-ai-toolkit && cd sdlc-ai-toolkit
 python3 install.py --workspace ~/work          # Windows: py -3 install.py --workspace C:\work
 ```
 
@@ -91,23 +127,23 @@ python3 install.py --set jira.site=https://<site>.atlassian.net \
   --set jira.project_keys=PROJ --set gitlab.group=<group> --workspace ~/work
 ```
 
-The installer copies agents and skills to `~/.copilot`, writes the MCP server
-config (Jira, GitLab, Orbit), installs the Orbit CLI through npm when Node.js
-is available, and prints an **ACTION REQUIRED** list (sign in to Jira and
-GitLab once, reload VS Code). That list is also saved to
-`~/.copilot/sdlc-toolkit/MANUAL_STEPS.md`.
+The installer copies agents and skills, writes the MCP server config (Jira,
+GitLab, Orbit), installs the Orbit CLI through npm when Node.js is available,
+and prints an **ACTION REQUIRED** list (sign in to Jira and GitLab once, reload
+the editor). That list is also saved to `~/.copilot/sdlc-toolkit/MANUAL_STEPS.md`.
 
 Other installer options:
 
 ```bash
+python3 install.py --target claude,cursor   # only these editors
 python3 install.py --dry-run      # show what would change
 python3 install.py --no-hooks     # skip git hook installation
 python3 install.py --uninstall    # remove everything the toolkit installed
 ```
 
-Re-run the installer after changing config, templates, agents or skills.
-Full instructions: **[docs/USER_MANUAL.md](docs/USER_MANUAL.md)**
-(sections 2 to 4 cover prerequisites, install and the manual steps).
+Re-run the installer (or the one-liner) to update. Full instructions:
+**[docs/USER_MANUAL.md](docs/USER_MANUAL.md)** (sections 2 to 4 cover prerequisites,
+install and the manual steps).
 
 ## Use
 
@@ -233,7 +269,7 @@ different products or versions never mix. Details: section 15 of the
 
 ## Requirements
 
-- VS Code with GitHub Copilot Chat (agent mode)
+- An AI editor: VS Code with GitHub Copilot Chat (agent mode), Claude Code, Cursor, Antigravity, Gemini CLI or Codex CLI
 - Python 3.8+ and Git
 - Jira Cloud and GitLab accounts
 - Node.js, optional, to auto-install the Orbit CLI

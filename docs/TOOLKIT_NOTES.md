@@ -83,3 +83,4 @@ uninstall; `SDLC_JOURNAL` env overrides). Agents log via the `work-journal` skil
 ## Change workflow
 Edit templates / `config/toolkit.ini` / agents / skills -> `python3 -m unittest discover -s tests`
 -> re-run `python3 install.py` to apply.
+- Multi-editor install: `installer_targets.py` (per-editor paths, agent conversion, MCP shapes); `install.sh`/`install.ps1` bootstrap from the public URL; test `MultiEditorTests`.

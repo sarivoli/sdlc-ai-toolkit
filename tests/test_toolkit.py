@@ -212,6 +212,33 @@ class MultiRepoTests(unittest.TestCase):
                 self.assertEqual(rep["result"], "FAIL")
 
 
+class MultiEditorTests(unittest.TestCase):
+    def test_targets_install_and_uninstall(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            h = Path(tmp)
+            (h / ".codex").mkdir()
+            (h / ".codex" / "config.toml").write_text('model = "x"\n[mcp_servers.mine]\nurl = "https://m"\n')
+            env = {"HOME": tmp, "USERPROFILE": tmp, "COPILOT_HOME": str(h / ".copilot"), "XDG_CONFIG_HOME": str(h / ".config")}
+            cmd = [sys.executable, str(ROOT / "install.py"), "--no-hooks", "--set", "orbit.enabled=no", "--target", "claude,cursor,antigravity,gemini,codex"]
+            run(*cmd, env=env)
+            run(*cmd, env=env)  # idempotent
+            self.assertTrue((h / ".claude/agents/sdlc-orchestrator.md").exists())
+            self.assertNotIn("@@SDLC@@", (h / ".claude/agents/sdlc-orchestrator.md").read_text(encoding="utf-8"))
+            self.assertTrue((h / ".cursor/skills/impact-analysis/SKILL.md").exists())
+            self.assertTrue((h / ".gemini/config/agents/sdlc-orchestrator.md").exists())
+            self.assertTrue((h / ".codex/skills/sdlc-orchestrator/SKILL.md").exists())  # agent as skill
+            self.assertIn("serverUrl", (h / ".gemini/config/mcp_config.json").read_text())
+            self.assertIn("httpUrl", (h / ".gemini/settings.json").read_text())
+            toml = (h / ".codex/config.toml").read_text()
+            self.assertEqual(toml.count("# >>> sdlc-ai-toolkit mcp >>>"), 1)
+            self.assertIn("[mcp_servers.mine]", toml)
+            run(*cmd[:2], "--uninstall", env=env)
+            self.assertFalse((h / ".claude/agents/sdlc-orchestrator.md").exists())
+            self.assertFalse((h / ".codex/skills/sdlc-orchestrator").exists())
+            self.assertEqual((h / ".codex/config.toml").read_text().strip().count("sdlc-ai-toolkit"), 0)
+            self.assertIn("[mcp_servers.mine]", (h / ".codex/config.toml").read_text())
+
+
 class InstallerTests(unittest.TestCase):
     def test_install_upgrade_uninstall(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -224,7 +251,7 @@ class InstallerTests(unittest.TestCase):
             (home / "skills" / "refactor").mkdir(parents=True)
             (home / "skills" / "refactor" / "SKILL.md").write_text("---\nname: refactor\ndescription: mine\n---\n")
             env = {"COPILOT_HOME": str(home)}
-            p = run(sys.executable, str(ROOT / "install.py"), "--workspace", str(ws),
+            p = run(sys.executable, str(ROOT / "install.py"), "--target", "copilot", "--workspace", str(ws),
                     "--set", "jira.site=https://acme.atlassian.net", "--set", "gitlab.group=acme", env=env)
             self.assertIn("ACTION REQUIRED", p.stdout)
             agents = sorted(x.name for x in (home / "agents").glob("*.agent.md"))
@@ -249,7 +276,7 @@ class InstallerTests(unittest.TestCase):
                 text = (sk / "SKILL.md").read_text(encoding="utf-8")
                 self.assertIn(f"name: {sk.name}", text, sk)
             # re-run (upgrade) is idempotent
-            run(sys.executable, str(ROOT / "install.py"), "--workspace", str(ws), env=env)
+            run(sys.executable, str(ROOT / "install.py"), "--target", "copilot", "--workspace", str(ws), env=env)
             # uninstall
             run(sys.executable, str(ROOT / "install.py"), "--uninstall", env=env)
             self.assertFalse((home / "agents" / "sdlc-orchestrator.agent.md").exists())

@@ -11,6 +11,10 @@ a helper CLI that a developer installs into their own GitHub Copilot setup.
    If the user told you their Jira site, project keys, GitLab group or the
    folder that holds their repos, pass them:
    `python3 install.py --set jira.site=https://<site>.atlassian.net --set jira.project_keys=PROJ --set gitlab.group=<group> --workspace <folder>`
+   Editors: `--target auto` (default: Copilot plus every editor found), `--target all`, or a
+   list of `copilot,claude,cursor,antigravity,gemini,codex`. Ask which editors the user uses.
+   Without a clone: `curl -fsSL https://raw.githubusercontent.com/sarivoli/sdlc-ai-toolkit/main/install.sh | bash`
+   (Windows: `irm .../install.ps1 | iex`).
 2. Do not edit files in `~/.copilot` by hand; the installer owns them.
 3. When it finishes, show the user the **"ACTION REQUIRED - manual steps"**
    section of the output verbatim as a numbered list, and tell them the same
