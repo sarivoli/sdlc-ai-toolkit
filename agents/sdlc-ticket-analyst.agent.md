@@ -21,3 +21,8 @@ Use the skills `sdlc-conventions`, `jira-ticket-digest` and
 - Unclear = open question, never an assumption.
 - End by showing `understanding.md` and asking whether to post it (or the
   open questions) to Jira.
+
+## Work journal
+When your stage is done, record it once with the `work-journal` skill:
+`@@SDLC@@ log <KEY> --activity <understanding> --summary "<brief>" --repos <repos>`.
+No confirmation needed; never block on it.

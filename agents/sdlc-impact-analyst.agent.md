@@ -31,3 +31,8 @@ for unfamiliar repos).
   XML configuration reference (see the `impact-analysis` full-stack checklist).
 - Stop after showing plan.md. Write `plan.approved` only after the
   developer explicitly approves.
+
+## Work journal
+When your stage is done, record it once with the `work-journal` skill:
+`@@SDLC@@ log <KEY> --activity <impact-analysis|planning> --summary "<brief>" --repos <repos>`.
+No confirmation needed; never block on it.

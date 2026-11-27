@@ -25,6 +25,8 @@ All deterministic work goes through one command. Call it exactly like this
 | Run the quality gate | `@@SDLC@@ quality <KEY>` |
 | List the ticket's commits across all repos | `@@SDLC@@ collect <KEY>` |
 | Render summary / MR / Teams texts | `@@SDLC@@ summary <KEY>` |
+| Record work in the personal journal | `@@SDLC@@ log <KEY> --activity <a> --summary "<brief>"` |
+| Work reports (week / month / year) | `@@SDLC@@ report --period week` |
 
 Read `config` once at the start of a session and follow it. Never hard-code
 values that the config defines.
@@ -36,6 +38,11 @@ Examples: `feature/kumar/JIVA70-1919`, `bugfix/kumar/JIVA70-1929`,
 `spike/py3/JIVA66-9988`. Use `branch-name` to build it; never invent names.
 Map ticket type -> branch type: Story/Task -> feature, Bug -> bugfix,
 Spike/POC -> spike, tech-debt -> refactor, maintenance -> chore.
+
+## Work journal (always)
+Every agent that works on a ticket key logs its finished activity with the
+`work-journal` skill (`@@SDLC@@ log ...`): one brief entry per activity, no
+confirmation needed. The journal is personal and shared across workspaces.
 
 ## Per-ticket notes folder
 `@@SDLC@@ workdir <KEY>` returns a folder (default `<workspace>/.sdlc/<KEY>/`)

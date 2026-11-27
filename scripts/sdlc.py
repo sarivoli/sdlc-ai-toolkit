@@ -20,6 +20,9 @@ Standard library only. Python 3.8+. Works on Windows, macOS and Linux.
     python sdlc.py render TEMPLATE --data F    render any template with JSON
     python sdlc.py install-hooks [--repo P ...]
     python sdlc.py orbit index|list|status|grep|context   GitLab Orbit code graph for THIS workspace folder
+    python sdlc.py log KEY --activity A --summary "..."   record work in the personal work journal
+    python sdlc.py worklog [--ticket K] [--period week]    list journal entries
+    python sdlc.py report --period week|month|year         work report from the journal
     python sdlc.py doctor                      check the installation
 """
 from __future__ import annotations
@@ -857,6 +860,194 @@ def cmd_orbit(cp, args) -> int:
     return subprocess.run(cmd, cwd=str(cwd), env=env).returncode
 
 
+# --------------------------------------------------------------------------
+# Work journal: one personal, cross-workspace log of work per ticket
+# --------------------------------------------------------------------------
+
+ACTIVITIES = ("understanding", "impact-analysis", "planning", "development", "bugfix", "refactor",
+              "testing", "quality-gate", "code-review", "commit", "merge-request", "jira-update",
+              "spike", "investigation", "other")
+ACTIVITY_ALIASES = {"impact": "impact-analysis", "analysis": "impact-analysis", "dev": "development",
+                    "implement": "development", "implementation": "development", "fix": "bugfix",
+                    "quality": "quality-gate", "mr": "merge-request", "review": "code-review",
+                    "plan": "planning", "test": "testing", "poc": "spike", "debug": "investigation"}
+
+
+def journal_path(cp) -> Path:
+    env = os.environ.get("SDLC_JOURNAL")
+    if env:
+        return Path(env).expanduser()
+    custom = cfg(cp, "journal", "path", "")
+    if custom:
+        return Path(custom).expanduser()
+    return TOOLKIT_HOME.parent / "sdlc-journal" / "worklog.jsonl"
+
+
+def read_journal(cp) -> list[dict]:
+    path = journal_path(cp)
+    rows: list[dict] = []
+    if not path.exists():
+        return rows
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            row = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and row.get("ticket") and row.get("ts"):
+            rows.append(row)
+    return rows
+
+
+def cmd_log(cp, args) -> int:
+    if not cfg_bool(cp, "journal", "enabled", True):
+        print("sdlc: work journal disabled ([journal] enabled = no)")
+        return 0
+    key = args.key.upper()
+    activity = ACTIVITY_ALIASES.get(args.activity.lower(), args.activity.lower())
+    if activity not in ACTIVITIES:
+        sys.exit(f"sdlc: unknown activity '{args.activity}'. Use one of: {', '.join(ACTIVITIES)}")
+    summary = " ".join(args.summary.split())
+    if not summary:
+        sys.exit("sdlc: --summary is required (one or two short sentences)")
+    now = _dt.datetime.now().astimezone()
+    entry = {
+        "ts": now.isoformat(timespec="seconds"),
+        "ticket": key,
+        "title": args.title or "",
+        "activity": activity,
+        "summary": summary,
+        "status": args.status or "",
+        "repos": [r for r in (args.repos or "").split(",") if r.strip()],
+        "branch": args.branch or "",
+        "workspace": str(workspace_root(cp)),
+    }
+    path = journal_path(cp)
+    for row in read_journal(cp):
+        if (row["ticket"], row.get("activity"), row.get("summary")) == (key, activity, summary) \
+                and row["ts"][:10] == entry["ts"][:10]:
+            print(f"[sdlc] already logged today: {key} {activity}")
+            return 0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    print(f"[sdlc] logged {key} {activity} -> {path}")
+    return 0
+
+
+def period_range(period: str, today: _dt.date | None = None) -> tuple[_dt.date, _dt.date]:
+    d = today or _dt.date.today()
+    p = period.lower()
+    if p == "today":
+        return d, d
+    if p == "yesterday":
+        y = d - _dt.timedelta(days=1)
+        return y, y
+    if p == "week":
+        s = d - _dt.timedelta(days=d.weekday())
+        return s, s + _dt.timedelta(days=6)
+    if p == "last-week":
+        s = d - _dt.timedelta(days=d.weekday() + 7)
+        return s, s + _dt.timedelta(days=6)
+    if p in ("month", "last-month"):
+        first = d.replace(day=1)
+        if p == "last-month":
+            first = (first - _dt.timedelta(days=1)).replace(day=1)
+        nxt = (first.replace(day=28) + _dt.timedelta(days=4)).replace(day=1)
+        return first, nxt - _dt.timedelta(days=1)
+    if p in ("year", "last-year"):
+        yr = d.year - (1 if p == "last-year" else 0)
+        return _dt.date(yr, 1, 1), _dt.date(yr, 12, 31)
+    if p == "all":
+        return _dt.date(1970, 1, 1), _dt.date(9999, 12, 31)
+    sys.exit("sdlc: --period must be today, yesterday, week, last-week, month, last-month, year, last-year or all")
+
+
+def journal_select(cp, args) -> tuple[list[dict], _dt.date, _dt.date]:
+    start, end = period_range(args.period or "week")
+    if args.date_from:
+        start = _dt.date.fromisoformat(args.date_from)
+    if args.date_to:
+        end = _dt.date.fromisoformat(args.date_to)
+    rows = []
+    for r in read_journal(cp):
+        day = _dt.date.fromisoformat(r["ts"][:10])
+        if not (start <= day <= end):
+            continue
+        if args.ticket and r["ticket"] != args.ticket.upper():
+            continue
+        if getattr(args, "activity", None) and r.get("activity") != ACTIVITY_ALIASES.get(args.activity, args.activity):
+            continue
+        rows.append(r)
+    rows.sort(key=lambda r: r["ts"])
+    return rows, start, end
+
+
+def cmd_worklog(cp, args) -> int:
+    rows, start, end = journal_select(cp, args)
+    if args.json:
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        return 0
+    print(f"Journal: {journal_path(cp)}  ({start} .. {end}, {len(rows)} entries)")
+    for r in rows:
+        print(f"{r['ts'][:16].replace('T', ' ')}  {r['ticket']:<12} {r.get('activity', ''):<16} {r.get('summary', '')}")
+    return 0
+
+
+def render_report(rows: list[dict], start: _dt.date, end: _dt.date, period: str, by: str) -> str:
+    title = {r["ticket"]: r["title"] for r in rows if r.get("title")}
+    out = [f"# Work report: {period} ({start} to {end})", ""]
+    if not rows:
+        out.append("No work recorded for this period.")
+        return "\n".join(out) + "\n"
+    tickets = sorted({r["ticket"] for r in rows})
+    days = sorted({r["ts"][:10] for r in rows})
+    acts: dict[str, int] = {}
+    for r in rows:
+        acts[r.get("activity", "other")] = acts.get(r.get("activity", "other"), 0) + 1
+    out += [f"**{len(tickets)} tickets, {len(days)} active days, {len(rows)} activities.**",
+            "Activities: " + ", ".join(f"{a} x{n}" for a, n in sorted(acts.items(), key=lambda x: -x[1])), ""]
+
+    def label(k: str) -> str:
+        return f"{k} - {title[k]}" if k in title else k
+
+    def line(r: dict, show_ticket: bool, show_day: bool) -> str:
+        bits = [r["ts"][:10] if show_day else r["ts"][11:16]]
+        if show_ticket:
+            bits.append(r["ticket"])
+        bits.append(f"**{r.get('activity', '')}**")
+        text = " ".join(str(b) for b in bits) + f": {r.get('summary', '')}"
+        extra = []
+        if r.get("repos"):
+            extra.append("repos: " + ", ".join(r["repos"]))
+        if r.get("status"):
+            extra.append("status: " + r["status"])
+        return "- " + text + (f" ({'; '.join(extra)})" if extra else "")
+
+    if by == "day":
+        for day in days:
+            out += [f"## {day} ({_dt.date.fromisoformat(day).strftime('%A')})", ""]
+            out += [line(r, True, False) for r in rows if r["ts"][:10] == day]
+            out.append("")
+    else:
+        for k in tickets:
+            mine = [r for r in rows if r["ticket"] == k]
+            out += [f"## {label(k)}", f"First worked {mine[0]['ts'][:10]}, last {mine[-1]['ts'][:10]}, {len(mine)} activities", ""]
+            out += [line(r, False, True) for r in mine]
+            out.append("")
+    return "\n".join(out)
+
+
+def cmd_report(cp, args) -> int:
+    rows, start, end = journal_select(cp, args)
+    text = render_report(rows, start, end, args.period or "week", args.by)
+    if args.out:
+        Path(args.out).expanduser().write_text(text, encoding="utf-8")
+        print(f"[sdlc] report written to {args.out}")
+    else:
+        print(text)
+    return 0
+
+
 def cmd_doctor(cp, args) -> int:
     ok = True
     def line(good, text):
@@ -877,6 +1068,8 @@ def cmd_doctor(cp, args) -> int:
     mcp = home / "mcp-config.json"
     servers = _load_json(mcp).get("mcpServers", {}) if mcp.exists() else {}
     line("atlassian" in servers and "gitlab" in servers, "MCP servers 'atlassian' and 'gitlab' configured")
+    jp = journal_path(cp)
+    line(True, f"Work journal: {jp} ({len(read_journal(cp))} entries)")
     ob = orbit_command()
     line(bool(ob) or not cfg_bool(cp, "orbit", "enabled", True), "Orbit CLI (code graph for impact analysis)" + ("" if ob else " - not found: npm install -g @gitlab/orbit"))
     for tool in ("ruff", "bandit", "mypy"):
@@ -903,6 +1096,16 @@ def main(argv=None) -> int:
     p = sub.add_parser("install-hooks"); p.add_argument("--repo", action="append")
     p = sub.add_parser("orbit"); p.add_argument("action", choices=["index", "list", "status", "grep", "context"])
     p.add_argument("--folder"); p.add_argument("--repo"); p.add_argument("rest", nargs=argparse.REMAINDER)
+    p = sub.add_parser("log"); p.add_argument("key"); p.add_argument("--activity", required=True)
+    p.add_argument("--summary", required=True); p.add_argument("--title"); p.add_argument("--status")
+    p.add_argument("--repos"); p.add_argument("--branch")
+    for name in ("worklog", "report"):
+        p = sub.add_parser(name); p.add_argument("--ticket"); p.add_argument("--activity")
+        p.add_argument("--period", default="week"); p.add_argument("--from", dest="date_from"); p.add_argument("--to", dest="date_to")
+        if name == "worklog":
+            p.add_argument("--json", action="store_true")
+        else:
+            p.add_argument("--by", choices=["day", "ticket"], default="day"); p.add_argument("--out")
     sub.add_parser("doctor")
     args = ap.parse_args(argv)
     cp = load_config()

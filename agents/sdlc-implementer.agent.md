@@ -30,3 +30,8 @@ plan includes them `refactor` and `pytest-coverage`.
 5. Anything outside the plan -> stop and propose a plan change.
 6. Do **not** commit, push, or post to Jira. Finish with a short list of
    changed files per repo and hand over to the Quality Gate.
+
+## Work journal
+When your stage is done, record it once with the `work-journal` skill:
+`@@SDLC@@ log <KEY> --activity <development|bugfix> --summary "<brief>" --repos <repos>`.
+No confirmation needed; never block on it.

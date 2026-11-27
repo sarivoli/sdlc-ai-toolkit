@@ -53,6 +53,9 @@ at the human checkpoints. Load the `sdlc-conventions` skill first.
    asks its own confirmations for push / MR / Jira.
 8. Finish with: MR links, Jira comment link, anything left to do.
 
+After each stage log it in the work journal (`work-journal` skill, `@@SDLC@@ log <KEY> --activity ...`
+with a brief summary); the specialists do this too, so only log what they did not.
+
 Post progress comments according to `[jira] progress_updates` via the
 `jira-progress-update` skill. Never skip a checkpoint, even if the
 developer asked you to "just do everything" - you may batch the

@@ -17,6 +17,7 @@ Python / Zope / SQLAlchemy backends with Angular frontends.
 - [Use](#use)
 - [Templates](#templates)
 - [Configuration](#configuration)
+- [Work journal and reports](#work-journal-and-reports)
 - [Branch and commit conventions](#branch-and-commit-conventions)
 - [Impact analysis and Orbit](#impact-analysis-and-orbit)
 - [Repository layout](#repository-layout)
@@ -26,9 +27,9 @@ Python / Zope / SQLAlchemy backends with Angular frontends.
 
 ## Features
 
-- **Six agents**: SDLC Orchestrator (start here), Ticket Analyst, Impact
-  Analyst, Implementer, Quality Gate and Release Scribe.
-- **Ten skills**: procedures for each stage plus the team's Python/Zope
+- **Seven agents**: SDLC Orchestrator (start here), Ticket Analyst, Impact
+  Analyst, Implementer, Quality Gate, Release Scribe and Work Journal.
+- **Eleven skills**: procedures for each stage plus the team's Python/Zope
   standards and checklists.
 - **Human checkpoints**: approval of the plan, confirmation before editing
   each repo, and confirmation before pushing, opening MRs or updating Jira.
@@ -42,6 +43,10 @@ Python / Zope / SQLAlchemy backends with Angular frontends.
   screens, endpoints, use cases to validate, regression areas and test data.
 - **Orbit code graph**: a local GitLab Orbit knowledge graph, one per
   workspace folder, backs callers, tests and reference searches.
+- **Automatic work journal**: every activity on a ticket (impact analysis,
+  development, bugfix, ...) is logged with a brief note to one personal file
+  shared by all VS Code workspaces. Ask the **SDLC Work Journal** agent for
+  a daily, weekly, monthly or yearly report right in chat.
 - **Editable templates** for every output (Jira comments, MR text, commits,
   reports, Teams update).
 - **Deterministic helper CLI** (`scripts/sdlc.py`) for the parts that must be
@@ -120,6 +125,8 @@ python3 sdlc.py check-commit --message "PROJ-123: fix lookup"
 python3 sdlc.py quality PROJ-123                         # run the quality gate
 python3 sdlc.py summary PROJ-123                         # render summary, MR and Teams text
 python3 sdlc.py orbit index                              # code graph for this workspace
+python3 sdlc.py log PROJ-123 --activity bugfix --summary "Fixed lookup"   # work journal entry
+python3 sdlc.py report --period month --by ticket       # monthly work report
 ```
 
 ## Templates
@@ -156,12 +163,30 @@ overrides are saved by the installer to
 | `[jira]` | Site, project keys, update frequency, workflow transitions |
 | `[gitlab]` | Group, default target branch |
 | `[mcp]` | MCP server endpoints |
+| `[journal]` | Work journal on/off and file location |
 | `[orbit]` | Orbit CLI install, indexing, hosted MCP, telemetry |
 | `[git]` | Branch convention, commit rules, protected branches |
 | `[quality]` | Lint, format, type, security and test commands |
 | `[workspace]` | Workspace folder, repo discovery depth, work dir |
 | `[safety]` | Steps that need confirmation |
 | `[notify]` | Teams / Outlook summary |
+
+## Work journal and reports
+
+Agents record each finished activity on a ticket with `sdlc.py log`. Entries
+go to `~/.copilot/sdlc-journal/worklog.jsonl`: one personal file used by
+every workspace, kept on upgrade and uninstall (change the location with
+`[journal] path`, e.g. a OneDrive folder). In Copilot Chat pick **SDLC Work
+Journal** and ask, for example:
+
+- "weekly report" / "what did I do last month"
+- "yearly report by ticket"
+- "when did I work on PROJ-123"
+- "log PROJ-123: investigated slow search"
+
+Periods: `today`, `yesterday`, `week`, `last-week`, `month`, `last-month`,
+`year`, `last-year`, `all`, or `--from/--to` dates. Details: section 16 of
+the [user manual](docs/USER_MANUAL.md).
 
 ## Branch and commit conventions
 
@@ -187,8 +212,8 @@ different products or versions never mix. Details: section 15 of the
 |------|------|-----------|
 | `config/toolkit.ini` | Team settings | Team lead |
 | `templates/` | Output formats | Team |
-| `agents/` | 6 custom agents | Maintainers |
-| `skills/` | 10 skills (procedures, Zope standards, checklists) | Maintainers |
+| `agents/` | 7 custom agents | Maintainers |
+| `skills/` | 11 skills (procedures, Zope standards, checklists) | Maintainers |
 | `vendor/awesome-copilot/` | Reused community skills and agents (MIT, pinned) | `scripts/update_vendor.py` |
 | `scripts/sdlc.py` | Deterministic helper CLI | Maintainers |
 | `install.py` | User-level installer, upgrade and uninstall | Maintainers |

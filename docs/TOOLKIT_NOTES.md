@@ -74,6 +74,12 @@ Process
 auto-indexes, and adds the `gitlab-orbit` http MCP. Used by the impact-analysis
 skill step 0 and the full-stack checklist. See USER_MANUAL section 15.
 
+## Work journal
+`[journal]` in toolkit.ini; `sdlc.py log|worklog|report` read/write an append-only
+JSONL at `~/.copilot/sdlc-journal/worklog.jsonl` (outside the toolkit home so it survives
+uninstall; `SDLC_JOURNAL` env overrides). Agents log via the `work-journal` skill; the
+`SDLC Work Journal` agent produces reports. See USER_MANUAL section 16.
+
 ## Change workflow
 Edit templates / `config/toolkit.ini` / agents / skills -> `python3 -m unittest discover -s tests`
 -> re-run `python3 install.py` to apply.

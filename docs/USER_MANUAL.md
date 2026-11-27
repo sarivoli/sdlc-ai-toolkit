@@ -511,3 +511,42 @@ New workspace folder? Run `sdlc.py orbit index` once there (agents do this
 before impact analysis). `sdlc.py doctor` reports whether the CLI is found.
 `glab orbit setup` does not support VS Code Copilot, so the toolkit wires it
 through the skills/agents instead.
+
+---
+
+## 16. Work journal and reports
+
+Every time an agent finishes an activity on a ticket (understanding, impact
+analysis, planning, development, bugfix, testing, quality gate, commit, MR,
+Jira update ...) it appends one brief entry to your **personal work journal**:
+`~/.copilot/sdlc-journal/worklog.jsonl`. The file is outside any workspace, so
+all your VS Code workspaces write to the same list. It is kept on upgrade and
+uninstall. Set `[journal] path` to put it in a synced folder (OneDrive,
+Dropbox) or `[journal] enabled = no` to turn it off.
+
+Each entry holds: timestamp, ticket key, ticket title (when known), activity,
+brief summary, repos, branch, status and the workspace folder. Identical
+entries on the same day are not repeated. Nothing is sent anywhere.
+
+**Reports from chat.** Pick the **SDLC Work Journal** agent (or ask any SDLC
+agent) and say what you need:
+
+| Ask | Runs |
+|-----|------|
+| "weekly report" | `sdlc.py report --period week` |
+| "what did I do last month, by ticket" | `sdlc.py report --period last-month --by ticket` |
+| "yearly report" | `sdlc.py report --period year --by ticket` |
+| "when did I work on PROJ-123" | `sdlc.py report --ticket PROJ-123 --period all --by ticket` |
+| "all my bugfixes this year" | `sdlc.py report --period year --activity bugfix` |
+
+Command reference:
+
+| Command | Purpose |
+|---------|---------|
+| `sdlc.py log KEY --activity A --summary "..." [--title T --repos a,b --branch B --status S]` | add an entry (also usable by hand) |
+| `sdlc.py worklog [--ticket K --period P --json]` | raw list of entries |
+| `sdlc.py report [--period P --by day or ticket --ticket K --activity A --from D --to D --out file.md]` | Markdown report with totals, per day or per ticket |
+
+Activities: understanding, impact-analysis, planning, development, bugfix,
+refactor, testing, quality-gate, code-review, commit, merge-request,
+jira-update, spike, investigation, other. Weeks run Monday to Sunday.

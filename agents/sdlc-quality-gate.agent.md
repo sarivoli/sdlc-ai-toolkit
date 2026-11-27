@@ -25,3 +25,8 @@ and `security-review`.
 - Missing tools are reported as missing with the install command.
 - Never weaken a check (no `# noqa`, `# nosec`, skipping tests, lowering
   coverage) without the developer's explicit OK and a comment explaining why.
+
+## Work journal
+When your stage is done, record it once with the `work-journal` skill:
+`@@SDLC@@ log <KEY> --activity <quality-gate> --summary "<brief>" --repos <repos>`.
+No confirmation needed; never block on it.

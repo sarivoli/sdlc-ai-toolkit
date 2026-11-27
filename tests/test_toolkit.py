@@ -95,6 +95,27 @@ class CommitRuleTests(unittest.TestCase):
         self.assertTrue(sdlc.protected(self.cp, "release/1.2"))
         self.assertFalse(sdlc.protected(self.cp, "fix/PROJ-1-x"))
 
+    def test_work_journal(self):
+        import datetime
+        with tempfile.TemporaryDirectory() as d:
+            jr = str(Path(d) / "w.jsonl")
+            env = {"SDLC_JOURNAL": jr}
+            run(sys.executable, str(SDLC), "log", "proj-1", "--activity", "impact", "--summary", "Traced callers",
+                "--title", "Fix lookup", env=env)
+            run(sys.executable, str(SDLC), "log", "proj-1", "--activity", "impact", "--summary", "Traced callers", env=env)
+            run(sys.executable, str(SDLC), "log", "PROJ-2", "--activity", "bugfix", "--summary", "Fixed it", env=env)
+            self.assertEqual(len(Path(jr).read_text().splitlines()), 2)
+            bad = run(sys.executable, str(SDLC), "log", "PROJ-3", "--activity", "nonsense", "--summary", "x",
+                      env=env, check=False)
+            self.assertNotEqual(bad.returncode, 0)
+            out = run(sys.executable, str(SDLC), "report", "--period", "year", "--by", "ticket", env=env).stdout
+            self.assertIn("PROJ-1 - Fix lookup", out)
+            self.assertIn("2 tickets", out)
+        s, e = sdlc.period_range("week", datetime.date(2026, 11, 27))
+        self.assertEqual((s, e), (datetime.date(2026, 11, 23), datetime.date(2026, 11, 29)))
+        s, e = sdlc.period_range("last-month", datetime.date(2026, 1, 15))
+        self.assertEqual((s, e), (datetime.date(2025, 12, 1), datetime.date(2025, 12, 31)))
+
     def test_branch_convention(self):
         import argparse
         import contextlib

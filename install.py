@@ -12,6 +12,7 @@ What it does (user level, so it works in every VS Code workspace):
   ~/.copilot/agents/          custom agents  (SDLC Orchestrator + specialists + reused community agents)
   ~/.copilot/skills/          agent skills   (toolkit skills + reused awesome-copilot skills)
   ~/.copilot/sdlc-toolkit/    config, templates, helper CLI, MANUAL_STEPS.md
+  ~/.copilot/sdlc-journal/    personal work journal (kept on upgrade and uninstall)
   ~/.copilot/mcp-config.json  'atlassian' and 'gitlab' MCP servers (merged, backup kept)
   <workspace repos>/.git/hooks commit-msg + pre-push hooks (existing hooks are never overwritten)
 

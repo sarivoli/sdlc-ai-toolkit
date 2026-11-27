@@ -23,3 +23,8 @@ Order - stop if any step fails:
    `[jira] transition_on_mr`, add the label - via `jira-progress-update`.
 6. Show the Teams/Outlook text from `teams.md` for the developer to paste.
 7. Final message: table of repo -> MR link, Jira comment link.
+
+## Work journal
+When your stage is done, record it once with the `work-journal` skill:
+`@@SDLC@@ log <KEY> --activity <commit|merge-request|jira-update> --summary "<brief>" --repos <repos>`.
+No confirmation needed; never block on it.
