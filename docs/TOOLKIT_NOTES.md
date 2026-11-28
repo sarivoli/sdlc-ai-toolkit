@@ -75,8 +75,11 @@ auto-indexes, and registers `gitlab-orbit` per `[orbit] mcp_mode`:
 `local` (default) = `scripts/orbit_mcp.py`, a stdlib stdio MCP server wrapping the
 CLI (orbit 1.9.x has no MCP server; `orbit query`/`status` call GitLab, so they are
 not exposed and GitLab kinds like `mr:` are refused); `remote` = hosted http
-endpoint; `off`. Editor shapes live in `installer_targets.shape_server`; an old
-hosted `gitlab-orbit` entry is migrated to the local one (`is_orbit_cloud`).
+endpoint; `off`. Editor shapes live in `installer_targets.shape_server`; configs
+carry no workspace path or `${...}` variable (Copilot rejects unresolved ones),
+the server resolves it: --workspace > client roots (`roots/list`) >
+$WORKSPACE_FOLDER/$PWD > cwd, never auto-indexing $HOME or `/`. Old hosted or
+earlier local `gitlab-orbit` entries are migrated (`is_orbit_legacy`).
 `orbit setup` is not run: it adds hooks to ~/.claude/settings.json and uses the
 shared ~/.gitlab/orbit graph. Used by the impact-analysis skill step 0 and the
 full-stack checklist. See USER_MANUAL section 15.

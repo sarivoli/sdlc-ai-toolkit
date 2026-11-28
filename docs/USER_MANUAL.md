@@ -525,21 +525,30 @@ and **never calls GitLab**: no GitLab sign-in is needed for Orbit.
 GitLab lookups (`mr:`, `issue:`, `pipeline:`, GitLab URLs ...) are refused; use
 the `gitlab` MCP server for merge requests, issues and pipelines.
 
-What the installer writes (VS Code `mcp.json`; the others use their own format,
-and Claude Code, Antigravity, Gemini CLI, Codex and the Copilot CLI use the
-folder they were started in instead of `--workspace`):
+What the installer writes (VS Code `mcp.json`; the other editors get the same
+command in their own format). There is no workspace path and no `${...}`
+variable: the file is shared by all your workspaces, and Copilot refuses
+unresolved variables ("Not supported by Copilot: Unresolved configuration ...
+variables").
 
 ```json
 "gitlab-orbit": {
   "type": "stdio",
   "command": "/usr/bin/python3",
-  "args": ["~/.copilot/sdlc-toolkit/scripts/orbit_mcp.py", "--workspace", "${workspaceFolder}"]
+  "args": ["/home/you/.copilot/sdlc-toolkit/scripts/orbit_mcp.py"]
 }
 ```
 
+The server finds the workspace folder itself, first match wins:
+`--workspace <folder>` (if you add it by hand), the editor's open folder (the
+MCP *roots* the editor reports; VS Code does), `$WORKSPACE_FOLDER` / `$PWD`,
+else the folder the editor started it in. It never indexes your home directory
+or `/` on its own: `orbit_status` then tells you how to index the right folder.
+
 An existing `gitlab-orbit` entry that points at the hosted endpoint
-(`https://gitlab.com/api/v4/orbit/mcp`) is replaced by the local one when you
-re-run the installer; your other servers are left alone.
+(`https://gitlab.com/api/v4/orbit/mcp`), or an earlier local entry with
+`--workspace ${workspaceFolder}`, is replaced when you re-run the installer;
+your other servers are left alone.
 
 **Check it:** VS Code > Command Palette > `MCP: List Servers` > `gitlab-orbit`
 > Start Server (or Show Output), then ask Copilot to call `orbit_status`.

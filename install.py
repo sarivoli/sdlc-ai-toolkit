@@ -276,12 +276,13 @@ class Installer:
         added = []
         for name, conf in servers.items():
             if name in block and block[name] != conf and name not in self.old_manifest.get(manifest_key, []) \
-                    and not T.is_orbit_cloud(name, block[name], conf):
+                    and not T.is_orbit_legacy(name, block[name], conf):
                 self.notes.append(f"MCP server `{name}` already exists in {path} with different settings - kept yours. "
                                   f"The agents expect a server named `{name}` ({T.describe(conf)}).")
                 continue
-            if name in block and T.is_orbit_cloud(name, block[name], conf):
-                self.notes.append(f"`{name}` in {path} switched from the hosted GitLab endpoint to the local Orbit server.")
+            if name in block and T.is_orbit_legacy(name, block[name], conf):
+                self.notes.append(f"`{name}` in {path} " + ("switched from the hosted GitLab endpoint to the local Orbit server."
+                                  if T.is_orbit_cloud(block[name]) else "updated to the current local Orbit server entry."))
             url = T.server_url(conf)
             for other, oconf in block.items():
                 if url and other != name and isinstance(oconf, dict) and T.server_url(oconf) == url:
@@ -315,7 +316,7 @@ class Installer:
             d = self.vscode_user_dir()
             if d:
                 self.merge_mcp(d / "mcp.json", "servers",
-                               {n: T.shape_server(c, "typed", T.VSCODE_WORKSPACE_VAR) for n, c in servers.items()},
+                               {n: T.shape_server(c, "typed") for n, c in servers.items()},
                                "vscode_mcp_servers")
             else:
                 self.notes.append("VS Code user folder not found; skipped profile mcp.json.")
@@ -325,7 +326,7 @@ class Installer:
             "      Repeat for `gitlab`. Trust the servers if VS Code asks. (`gitlab-orbit` is local and needs no sign-in.)\n"
             "      If they don't appear: run `MCP: Open User Configuration` and add under \"servers\":\n"
             + "\n".join("      " + ln for ln in json.dumps(
-                {n: T.shape_server(c, "typed", T.VSCODE_WORKSPACE_VAR) for n, c in servers.items()}, indent=2).splitlines()))
+                {n: T.shape_server(c, "typed") for n, c in servers.items()}, indent=2).splitlines()))
 
     # ------------------------------------------------------------ other editors
     def _is_ours(self, dst: Path, owned: list) -> bool:
@@ -398,7 +399,7 @@ class Installer:
             if shape == "toml":
                 self._toml_mcp(path, servers, rec)
             else:
-                self.merge_mcp(path, key, {n: T.shape_server(c, shape, spec.get("workspace_var")) for n, c in servers.items()},
+                self.merge_mcp(path, key, {n: T.shape_server(c, shape) for n, c in servers.items()},
                                f"mcp:{tgt}")
             self.manifest["targets"][tgt] = rec
             self.done.append(f"{spec['label']}: {len(rec['skills'])} skills, {len(rec['agents'])} agents -> {sk_dir.parent}")
