@@ -103,6 +103,14 @@ so there is one implementation for all OSes.
 Ideas: detect the Atlassian MCP sign-in per editor where the token store is
 documented; let `orbit_mcp.py`'s `orbit_status` reuse `orbit_state`.
 
+## Hook inventory
+`sdlc.py hooks` (`git_hook_inventory`, `editor_hook_inventory`): toolkit git hooks in
+workspace repos + repos in manifest `hooks`, a global `core.hooksPath`, and Claude /
+Gemini / Cursor hook entries that mention the toolkit or Orbit. `install-hooks` prints
+`[sdlc] hook <installed|updated|unchanged|foreign> <name> <path>`; the installer
+(`hooks_report`) overlays those on the inventory and prints / saves it on every run.
+`--no-hooks` now keeps the manifest's hooked repos (before, uninstall forgot them).
+
 ## Work journal
 `[journal]` in toolkit.ini; `sdlc.py log|worklog|report` read/write an append-only
 JSONL at `~/.copilot/sdlc-journal/worklog.jsonl` (outside the toolkit home so it survives

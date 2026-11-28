@@ -144,6 +144,12 @@ and shown as done or to do with the exact command:
 
 Re-check any time with `python3 ~/.copilot/sdlc-toolkit/scripts/sdlc.py checklist`.
 
+It also lists **every hook on the system** that the toolkit installs or that
+affects it (git `commit-msg` / `pre-push` per repo, a global `core.hooksPath`,
+Orbit editor hooks) with trigger, path and status (installed / updated /
+unchanged / missing), after a fresh install and after every update. Again any
+time: `python3 ~/.copilot/sdlc-toolkit/scripts/sdlc.py hooks`.
+
 Other installer options:
 
 ```bash
@@ -169,6 +175,7 @@ Helper CLI examples (installed at `~/.copilot/sdlc-toolkit/scripts/sdlc.py`):
 python3 sdlc.py doctor                                   # check the installation
 python3 sdlc.py checklist                                # Orbit index, git auth, Jira auth
 python3 sdlc.py preflight                                # Orbit gate before ticket work
+python3 sdlc.py hooks                                    # hooks the toolkit installed, with status
 python3 sdlc.py repos                                    # repos in the workspace
 python3 sdlc.py branch-name PROJ-123 --type bugfix --user kumar
 python3 sdlc.py check-commit --message "PROJ-123: fix lookup"

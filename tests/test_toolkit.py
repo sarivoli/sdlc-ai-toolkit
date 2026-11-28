@@ -703,3 +703,79 @@ class TicketWorkflowGateTests(unittest.TestCase):
         conv = (ROOT / "skills/sdlc-conventions/SKILL.md").read_text(encoding="utf-8")
         self.assertIn("Exit 3 (STOP)", conv)
         self.assertIn("Never choose this yourself", conv)
+
+
+class HookInventoryTests(unittest.TestCase):
+    def setUp(self):
+        self.cp = sdlc.load_config()
+
+    def sdlc_cli(self, ws: Path, *args):
+        return run(sys.executable, str(SDLC), *args, env={"SDLC_TOOLKIT_HOME": str(ROOT), "SDLC_WORKSPACE_ROOT": str(ws)},
+                   check=False)
+
+    def test_statuses(self):
+        with tempfile.TemporaryDirectory() as t:
+            ws = Path(t) / "ws"
+            a, b, c = git_init(ws / "a"), git_init(ws / "b"), git_init(ws / "c")
+            (b / ".git" / "hooks").mkdir(parents=True, exist_ok=True)
+            (b / ".git" / "hooks" / "commit-msg").write_text("#!/bin/sh\necho mine\n")
+            run("git", "-C", str(c), "config", "core.hooksPath", ".husky")
+            p = self.sdlc_cli(ws, "install-hooks")
+            self.assertIn(f"[sdlc] hook installed commit-msg {sdlc._posix(a / '.git' / 'hooks' / 'commit-msg')}", p.stdout)
+            self.assertIn("[sdlc] hook foreign commit-msg", p.stdout)
+            self.assertIn("[sdlc] hook unchanged pre-push", self.sdlc_cli(ws, "install-hooks").stdout)
+            rows = {(Path(r["repo"]).name, r["name"]): r for r in sdlc.git_hook_inventory(self.cp, [a, b, c])}
+            self.assertEqual(rows[("a", "commit-msg")]["status"], "installed")
+            self.assertEqual(rows[("a", "commit-msg")]["event"], sdlc.HOOK_EVENTS["commit-msg"])
+            self.assertEqual(rows[("b", "commit-msg")]["status"], "foreign")
+            self.assertEqual(rows[("b", "pre-push")]["status"], "installed")
+            self.assertEqual(rows[("c", "pre-push")]["status"], "skipped")
+            # a toolkit hook pointing at a removed helper is outdated, and install-hooks updates it
+            (a / ".git" / "hooks" / "pre-push").write_text(f'#!/bin/sh\n# {sdlc.HOOK_MARKER}\n"python3" "/gone/sdlc.py" x\n')
+            self.assertEqual({r["name"]: r["status"] for r in sdlc.git_hook_inventory(self.cp, [a])}["pre-push"], "outdated")
+            self.assertIn("[sdlc] hook updated pre-push", self.sdlc_cli(ws, "install-hooks").stdout)
+            (a / ".git" / "hooks" / "commit-msg").unlink()
+            p = self.sdlc_cli(ws, "hooks", "--json")
+            self.assertEqual(p.returncode, 1)  # something is missing
+            got = {(Path(r["repo"]).name, r["name"]): r["status"] for r in json.loads(p.stdout)}
+            self.assertEqual(got[("a", "commit-msg")], "missing")
+            text = self.sdlc_cli(ws, "hooks", "--markdown").stdout
+            self.assertIn("| Hook | Type | Trigger | Status | Path |", text)
+            self.assertIn("no global git hooks, editor/agent hooks, shell hooks or scheduled jobs", text)
+
+    def test_editor_hooks_listed_without_secrets(self):
+        with tempfile.TemporaryDirectory() as t:
+            home = Path(t)
+            (home / ".claude").mkdir()
+            (home / ".claude" / "settings.json").write_text(json.dumps({"hooks": {
+                "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "orbit hook session-start"}]}],
+                "PreToolUse": [{"hooks": [{"type": "command", "command": "my-linter --fix"}]}]}}))
+            rows = sdlc.editor_hook_inventory(home)
+            self.assertEqual(len(rows), 1)  # unrelated hooks are not listed
+            self.assertEqual(rows[0]["event"], "SessionStart")
+            self.assertEqual(rows[0]["status"], "external")
+            self.assertEqual(rows[0]["type"], "editor hook (Claude Code)")
+
+
+class InstallerHookReportTests(unittest.TestCase):
+    def test_fresh_install_then_update(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            ws = tmp / "work"
+            repo = git_init(ws / "app")
+            env = {"COPILOT_HOME": str(tmp / ".copilot"), "XDG_CONFIG_HOME": str(tmp / ".config")}
+            cmd = [sys.executable, str(ROOT / "install.py"), "--target", "copilot", "--workspace", str(ws),
+                   "--set", "orbit.enabled=no"]
+            p = run(*cmd, env=env)
+            self.assertIn("HOOKS ON THIS SYSTEM", p.stdout)
+            self.assertIn("[installed] commit-msg (git hook)", p.stdout)
+            md = (tmp / ".copilot" / "sdlc-toolkit" / "MANUAL_STEPS.md").read_text(encoding="utf-8")
+            self.assertIn("## Hooks on this system", md)
+            self.assertIn(sdlc._posix(repo / ".git" / "hooks" / "pre-push"), md)
+            self.assertLess(md.index("## Post-install checklist"), md.index("## Hooks on this system"))
+            p = run(*cmd, env=env)  # update / re-install
+            self.assertIn("[unchanged] pre-push (git hook)", p.stdout)
+            p = run(*cmd, "--no-hooks", env=env)
+            self.assertIn("[installed] commit-msg (git hook)", p.stdout)  # still on disk, reported as such
+            m = json.loads((tmp / ".copilot" / "sdlc-toolkit" / "manifest.json").read_text())
+            self.assertEqual(m["hooks"], [str(repo)])  # --no-hooks keeps track of hooks installed earlier

@@ -19,6 +19,7 @@ Standard library only. Python 3.8+. Works on Windows, macOS and Linux.
     python sdlc.py summary KEY                 render summary / MR / Teams text
     python sdlc.py render TEMPLATE --data F    render any template with JSON
     python sdlc.py install-hooks [--repo P ...]
+    python sdlc.py hooks [--json|--markdown]   every hook the toolkit installs / that affects it, with status
     python sdlc.py orbit index|list|status|grep|context   GitLab Orbit code graph for THIS workspace folder
     python sdlc.py log KEY --activity A --summary "..."   record work in the personal work journal
     python sdlc.py worklog [--ticket K] [--period week]    list journal entries
@@ -670,11 +671,15 @@ def cmd_install_hooks(cp, args) -> int:
         hdir.mkdir(parents=True, exist_ok=True)
         for name, body in hook_scripts().items():
             target = hdir / name
-            if target.exists() and HOOK_MARKER not in target.read_text(encoding="utf-8", errors="ignore"):
+            before = target.read_text(encoding="utf-8", errors="ignore") if target.exists() else None
+            if before is not None and HOOK_MARKER not in before:
                 manual.append(f"{repo.name}: existing {name} hook kept. Chain the toolkit hook into it manually (see USER_MANUAL.md > Hooks).")
+                print(f"[sdlc] hook foreign {name} {_posix(target)}")
                 continue
             target.write_text(body, encoding="utf-8", newline="\n")
             target.chmod(0o755)
+            status = "installed" if before is None else ("unchanged" if before == body else "updated")
+            print(f"[sdlc] hook {status} {name} {_posix(target)}")
         exclude = Path(git(repo, "rev-parse", "--git-path", "info/exclude"))
         if not exclude.is_absolute():
             exclude = repo / exclude
@@ -688,6 +693,142 @@ def cmd_install_hooks(cp, args) -> int:
     for m in manual:
         print(f"[sdlc] MANUAL: {m}")
     return 0
+
+
+# --------------------------------------------------------------------------
+# Hook inventory: every hook the toolkit installs or that affects it
+# --------------------------------------------------------------------------
+
+HOOK_EVENTS = {"commit-msg": "git commit (checks the commit message format)",
+               "pre-push": "git push (blocks pushes to protected branches)"}
+# editor / agent hook configs that may hold hooks (the toolkit writes none; listed when they reference it or Orbit)
+EDITOR_HOOK_FILES = (("Claude Code", ".claude/settings.json"), ("Gemini CLI", ".gemini/settings.json"),
+                     ("Cursor", ".cursor/hooks.json"))
+
+
+def _hook_dir(repo: Path) -> Path:
+    hdir = Path(git(repo, "rev-parse", "--git-path", "hooks", check=False) or ".git/hooks")
+    return hdir if hdir.is_absolute() else repo / hdir
+
+
+def _manifest_repos() -> list[Path]:
+    m = _load_json(TOOLKIT_HOME / "manifest.json") if (TOOLKIT_HOME / "manifest.json").exists() else {}
+    return [Path(r) for r in m.get("hooks", []) if r]
+
+
+def git_hook_inventory(cp, repos: list[Path] | None = None) -> list[dict]:
+    """State of the toolkit's git hooks in every workspace repo (and every repo it ever hooked)."""
+    if repos is None:
+        try:
+            repos = discover_repos(cp)
+        except SystemExit:
+            repos = []
+        repos = repos + [r for r in _manifest_repos() if r not in repos]
+    wanted = hook_scripts()
+    out = []
+    glob_path = git(Path.cwd(), "config", "--global", "--get", "core.hooksPath", check=False) if shutil.which("git") else ""
+    if glob_path:
+        out.append({"name": "core.hooksPath", "type": "git config (global)", "event": "all git hooks of every repo",
+                    "path": glob_path, "repo": "", "status": "external",
+                    "note": "a global hooks folder replaces .git/hooks in every repo: the toolkit hooks are not used"})
+    for repo in repos:
+        if not is_repo(repo):
+            for name in wanted:
+                out.append({"name": name, "type": "git hook", "event": HOOK_EVENTS[name], "repo": str(repo),
+                            "path": _posix(repo / ".git" / "hooks" / name), "status": "missing",
+                            "note": "repo no longer exists"})
+            continue
+        local = git(repo, "config", "--get", "core.hooksPath", check=False)
+        hdir = _hook_dir(repo)
+        for name, body in wanted.items():
+            row = {"name": name, "type": "git hook", "event": HOOK_EVENTS[name], "repo": str(repo)}
+            if local:
+                target = Path(local) if Path(local).is_absolute() else repo / local
+                row.update(path=_posix(target / name), status="skipped",
+                           note=f"core.hooksPath={local} (husky/pre-commit?): add the toolkit check there by hand")
+            else:
+                target = hdir / name
+                text = target.read_text(encoding="utf-8", errors="ignore") if target.exists() else None
+                row["path"] = _posix(target)
+                if text is None:
+                    row["status"] = "missing"
+                elif HOOK_MARKER not in text:
+                    row.update(status="foreign", note="your own hook, kept; chain the toolkit check into it")
+                elif text != body:
+                    used = re.findall(r'"([^"]*sdlc\.py)"', text)
+                    if used and all(Path(u).exists() for u in used):
+                        row.update(status="installed", note=f"runs {used[0]}")
+                    else:
+                        row.update(status="outdated", note="points at a helper that no longer exists: run install-hooks")
+                else:
+                    row["status"] = "installed"
+            out.append(row)
+    return out
+
+
+def _walk_hook_commands(node, event=None):
+    """(event, command) pairs from Claude/Gemini/Cursor style hook configs."""
+    if isinstance(node, dict):
+        if isinstance(node.get("command"), str):
+            yield event, node["command"]
+        for k, v in node.items():
+            if k != "command":
+                yield from _walk_hook_commands(v, event or k)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _walk_hook_commands(v, event)
+
+
+def editor_hook_inventory(home: Path | None = None) -> list[dict]:
+    home = home or Path.home()
+    out = []
+    for editor, rel in EDITOR_HOOK_FILES:
+        path = home / rel
+        hooks = _load_json(path).get("hooks") if path.exists() else None
+        if not hooks:
+            continue
+        for event, command in _walk_hook_commands(hooks):
+            low = command.lower()
+            if HOOK_MARKER in low or "sdlc.py" in low or "orbit" in low:
+                ours = HOOK_MARKER in low or "sdlc.py" in low
+                out.append({"name": redact(command)[:120], "type": f"editor hook ({editor})", "event": event or "?",
+                            "path": _posix(path), "repo": "", "status": "installed" if ours else "external",
+                            "note": "" if ours else "not written by the toolkit (e.g. `orbit setup`)"})
+    return out
+
+
+def hook_inventory(cp, repos: list[Path] | None = None, home: Path | None = None) -> list[dict]:
+    return git_hook_inventory(cp, repos) + editor_hook_inventory(home)
+
+
+HOOKS_NONE_NOTE = ("The toolkit installs only git hooks (commit-msg, pre-push) in workspace repos. It installs no "
+                   "global git hooks, editor/agent hooks, shell hooks or scheduled jobs.")
+
+
+def render_hooks(rows: list[dict], markdown: bool = True) -> str:
+    if not rows:
+        return "No hooks found (no git repos in the workspace yet).\n" + HOOKS_NONE_NOTE
+    lines = []
+    if markdown:
+        lines += ["| Hook | Type | Trigger | Status | Path |", "|---|---|---|---|---|"]
+        for r in rows:
+            st = r["status"] + (f" - {r['note']}" if r.get("note") else "")
+            lines.append(f"| `{r['name']}` | {r['type']} | {r['event']} | {st} | `{r['path']}` |")
+    else:
+        for r in rows:
+            lines.append(f"- {r['name']:<14} {r['type']:<20} {r['status']:<10} {r['path']}")
+            lines.append(f"    trigger: {r['event']}" + (f"; {r['note']}" if r.get("note") else ""))
+    lines += ["", HOOKS_NONE_NOTE]
+    return "\n".join(lines)
+
+
+def cmd_hooks(cp, args) -> int:
+    rows = hook_inventory(cp, discover_repos(cp, args.repo) if args.repo else None)
+    if args.json:
+        print(json.dumps(rows, indent=2))
+    else:
+        print(render_hooks(rows, markdown=args.markdown))
+    return 0 if all(r["status"] in ("installed", "unchanged", "updated", "external") for r in rows) else 1
 
 
 # --------------------------------------------------------------------------
@@ -1423,6 +1564,11 @@ def cmd_doctor(cp, args) -> int:
     if ob and cfg_bool(cp, "orbit", "enabled", True):
         st = orbit_state(cp, _checks_folder(cp, args))
         line(st["ok"], f"Orbit index for {st['folder']}: {st['summary']}" + ("" if st["ok"] else f" -> {st['index_cmd']}"))
+    hooks = git_hook_inventory(cp)
+    bad = [h for h in hooks if h["status"] in ("missing", "outdated")]
+    line(not bad, f"git hooks: {sum(h['status'] == 'installed' for h in hooks)} installed"
+         + (f", {len(bad)} missing/outdated -> install-hooks (details: hooks)" if bad else "")
+         + ("".join(f", {n} {s}" for s, n in ((s, sum(h['status'] == s for h in hooks)) for s in ("foreign", "skipped", "external")) if n)))
     for tool in ("ruff", "bandit", "mypy"):
         print(("  ✅ " if shutil.which(tool) else "  ·  ") + f"{tool} {'found' if shutil.which(tool) else 'not found (optional)'}")
     print("\nAll good." if ok else "\nSome items need attention (see ⚠ above and MANUAL_STEPS.md).")
@@ -1445,6 +1591,8 @@ def main(argv=None) -> int:
     p = sub.add_parser("summary"); p.add_argument("key")
     p = sub.add_parser("render"); p.add_argument("template"); p.add_argument("--data"); p.add_argument("--out"); p.add_argument("--repo")
     p = sub.add_parser("install-hooks"); p.add_argument("--repo", action="append")
+    p = sub.add_parser("hooks"); p.add_argument("--repo", action="append"); p.add_argument("--json", action="store_true")
+    p.add_argument("--markdown", action="store_true")
     p = sub.add_parser("orbit"); p.add_argument("action", choices=["index", "list", "status", "grep", "context"])
     p.add_argument("--folder"); p.add_argument("--repo"); p.add_argument("rest", nargs=argparse.REMAINDER)
     p = sub.add_parser("log"); p.add_argument("key"); p.add_argument("--activity", required=True)

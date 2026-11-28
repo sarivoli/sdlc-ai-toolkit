@@ -200,6 +200,28 @@ workspace folder is not indexed, the agent **stops** and tells you to install
 Orbit or run the index first, with the exact command. It continues without
 Orbit only if you explicitly say *proceed without Orbit*.
 
+### Hooks on this system
+
+After every install **and** every update the installer also lists every hook
+the toolkit installs or that affects it (printed as **HOOKS ON THIS SYSTEM**
+and saved in `MANUAL_STEPS.md` under the checklist): name, type, trigger, full
+path and status.
+
+| Status | Meaning |
+|---|---|
+| `installed` | written by this run (or present and working when listed later) |
+| `updated` / `unchanged` | a toolkit hook that was already there, rewritten / identical |
+| `missing` | expected but not there (repo cloned later, or `--no-hooks`) - run `sdlc install-hooks` |
+| `outdated` | toolkit hook pointing at a helper that no longer exists - run `sdlc install-hooks` |
+| `foreign` | your own hook with the same name, kept; chain the toolkit check into it |
+| `skipped` | the repo uses `core.hooksPath` (husky / pre-commit); add the check there by hand |
+| `external` | not written by the toolkit but relevant: a global `core.hooksPath`, or an editor hook that runs Orbit (e.g. from `orbit setup`) |
+
+The toolkit installs only the git `commit-msg` and `pre-push` hooks in the
+workspace repos. It installs no global git hooks, editor/agent hooks, shell
+hooks or scheduled jobs. List them any time with `sdlc hooks`
+(`--json`, `--markdown`); `sdlc doctor` shows a one-line summary.
+
 ### Other manual steps
 
 The installer also prints an **ACTION REQUIRED** list (same file). The usual items:
@@ -296,6 +318,7 @@ You don't have to run the full flow.
   sdlc doctor                      # installation check
   sdlc checklist                   # Orbit index / git auth / Jira auth status
   sdlc preflight                   # Orbit gate run before ticket work (exit 3 = stop)
+  sdlc hooks                       # every hook the toolkit installed, with status
   ```
 
 ---

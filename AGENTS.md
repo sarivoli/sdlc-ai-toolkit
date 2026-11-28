@@ -19,7 +19,7 @@ a helper CLI that a developer installs into their own GitHub Copilot setup.
 3. When it finishes, show the user the **"ACTION REQUIRED - manual steps"**
    section of the output verbatim as a numbered list, then the
    **"POST-INSTALL CHECKLIST"** (Orbit index - mandatory, git auth, Jira auth)
-   verbatim, and tell them the same report is saved at
+   verbatim, then the **"HOOKS ON THIS SYSTEM"** list, and tell them the same report is saved at
    `~/.copilot/sdlc-toolkit/MANUAL_STEPS.md`. Open checklist items come first:
    offer to run the printed Orbit index command for them.
 4. Offer to open `docs/USER_MANUAL.md`.

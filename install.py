@@ -62,6 +62,8 @@ class Installer:
         self.manual: list[str] = []
         self.notes: list[str] = []
         self.checks: list[dict] = []
+        self.hook_actions: dict[str, str] = {}
+        self.hooks: list[dict] | None = None
 
     @staticmethod
     def _resolve_targets(spec: str) -> list:
@@ -470,6 +472,7 @@ class Installer:
 
     def install_hooks(self, root: Path):
         if self.args.no_hooks:
+            self.manifest["hooks"] = list(self.old_manifest.get("hooks", []))  # still ours: keep for uninstall
             self.notes.append("Git hooks skipped (--no-hooks). Add later: " + self.sdlc_command() + " install-hooks")
             return
         if not root.exists() or self.dry:
@@ -478,6 +481,10 @@ class Installer:
         proc = subprocess.run([sys.executable, str(self.home / "scripts" / "sdlc.py"), "install-hooks"],
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env, encoding="utf-8")
         repos = [ln for ln in proc.stdout.splitlines() if ln.startswith("[sdlc] hooks installed")]
+        for ln in proc.stdout.splitlines():
+            parts = ln.split(" ", 4)
+            if ln.startswith("[sdlc] hook ") and len(parts) == 5:
+                self.hook_actions[parts[4]] = parts[2]  # path -> installed | updated | unchanged | foreign
         for ln in proc.stdout.splitlines():
             if ln.startswith("[sdlc] MANUAL:"):
                 self.manual.append(ln.replace("[sdlc] MANUAL:", "Git hooks -").strip())
@@ -516,6 +523,45 @@ class Installer:
                            for n, t in (("orbit", "Orbit code index (MANDATORY - required to save tokens)"),
                                         ("git", "Git authentication"), ("jira", "Jira authentication"))]
 
+    def hooks_report(self, root: Path):
+        """Every hook the toolkit installs or that affects it, with this run's status."""
+        script, home = self.home / "scripts" / "sdlc.py", self.home
+        if not script.exists():
+            script, home = SRC / "scripts" / "sdlc.py", SRC
+        env = dict(os.environ, SDLC_TOOLKIT_HOME=str(home), SDLC_WORKSPACE_ROOT=str(root))
+        try:
+            proc = subprocess.run([sys.executable, str(script), "hooks", "--json"], stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
+                                  errors="replace", env=env, timeout=60)
+            rows = json.loads(proc.stdout)
+        except Exception:
+            self.hooks = None
+            return
+        for r in rows:
+            done = self.hook_actions.get(r.get("path", ""))
+            if done in ("installed", "updated", "unchanged") and r["status"] == "installed":
+                r["status"] = done
+            elif r["status"] == "missing" and self.args.no_hooks:
+                r["note"] = "not installed (--no-hooks)"
+        self.hooks = rows
+
+    def _hook_lines(self, markdown: bool) -> list[str]:
+        note = ("The toolkit installs only git hooks (commit-msg, pre-push) in workspace repos. It installs no "
+                "global git hooks, editor/agent hooks, shell hooks or scheduled jobs.")
+        rows = self.hooks or []
+        if not rows:
+            return ["No hooks: no git repos in the workspace yet.", "", note]
+        out = []
+        if markdown:
+            out += ["| Hook | Type | Trigger | Status | Path |", "|---|---|---|---|---|"]
+            out += [f"| `{r['name']}` | {r['type']} | {r['event']} | {r['status']}"
+                    + (f" - {r['note']}" if r.get("note") else "") + f" | `{r['path']}` |" for r in rows]
+        else:
+            for r in rows:
+                out.append(f"- [{r['status']}] {r['name']} ({r['type']}) - {r['event']}")
+                out.append(f"    {r['path']}" + (f"  ({r['note']})" if r.get("note") else ""))
+        return out + ["", note]
+
     def _checklist_lines(self) -> list[str]:
         out = []
         for i, it in enumerate(self.checks, 1):
@@ -541,6 +587,9 @@ class Installer:
             report += self._checklist_lines()
             report += ["", "`[x]` done · `[ ]` to do · `[~]` in progress · `[?]` not verifiable automatically. "
                        f"Re-check any time: `{self.sdlc_command()} checklist`", ""]
+        if self.hooks is not None:
+            report += ["## Hooks on this system", ""] + self._hook_lines(markdown=True)
+            report += ["", f"List them any time: `{self.sdlc_command()} hooks`", ""]
         report += ["## Done", ""]
         report += [f"- {d}" for d in self.done]
         report += ["", "## Manual steps (do these now)", ""]
@@ -567,6 +616,11 @@ class Installer:
                 print(("  " + ln).replace("**", ""))
             print(f"  [x] done  [ ] to do  [~] in progress  [?] not verifiable automatically. "
                   f"Re-check: {self.sdlc_command()} checklist")
+        if self.hooks is not None:
+            print("\n  HOOKS ON THIS SYSTEM (installed / updated / unchanged / missing):")
+            for ln in self._hook_lines(markdown=False):
+                print("  " + ln if ln else "")
+            print(f"  List them any time: {self.sdlc_command()} hooks")
         print(f"\n  This report is saved at {(self.home / 'MANUAL_STEPS.md').as_posix()}")
 
     def run(self):
@@ -583,6 +637,7 @@ class Installer:
         self.install_hooks(root)
         self.optional_tools()
         self.post_install_checklist(root)
+        self.hooks_report(root)
         self.finish()
 
     # ------------------------------------------------------------ uninstall
