@@ -847,8 +847,8 @@ def cmd_orbit(cp, args) -> int:
         cmd = base + ["workspace", "index", str(folder)] + extra
     elif action == "list":
         cmd = base + ["workspace", "list"] + extra
-    elif action == "status":
-        cmd = base + ["status"] + extra
+    elif action == "status":  # local graph state (`orbit status` would ask the GitLab API)
+        cmd = base + ["workspace", "list"] + extra
     elif action in ("grep", "context"):
         cmd = base + [action] + extra
         if cwd == folder and not is_repo(folder):
