@@ -31,3 +31,6 @@ mechanics, with these team rules on top (team rules win on conflict):
    confirmation.
 7. When all repos are done, run `@@SDLC@@ collect <KEY>` and show the
    result so the developer sees every commit across repos.
+
+## Panel (when the `sdlc-ui` tools are available)
+Before any push, ask with `sdlc_ui_confirm` (`action` `push`, the exact push command and commit list in `preview`). Afterwards show the commits per repo with `sdlc_ui_summary`. Otherwise write it as text. Rules: `sdlc-conventions` > Panels in chat.

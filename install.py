@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import configparser
 import datetime as _dt
+import hashlib
 import json
 import os
 import shutil
@@ -56,7 +57,8 @@ class Installer:
         self.manifest_path = self.home / "manifest.json"
         self.old_manifest = self._read_json(self.manifest_path)
         self.manifest = {"version": VERSION, "installed_at": _dt.datetime.now().isoformat(timespec="seconds"),
-                         "skills": [], "agents": [], "mcp_servers": [], "vscode_mcp_servers": [], "hooks": []}
+                         "skills": [], "agents": [], "mcp_servers": [], "vscode_mcp_servers": [], "hooks": [],
+                         "source": str(SRC)}
         self.targets = self._resolve_targets(getattr(args, "target", None) or "auto")
         self.done: list[str] = []
         self.manual: list[str] = []
@@ -261,7 +263,38 @@ class Installer:
             servers["gitlab-orbit"] = self.orbit_local_server()
         elif mode == "remote":
             servers["gitlab-orbit"] = {"type": "http", "url": cp.get("orbit", "mcp_url", fallback=T.ORBIT_CLOUD_URL)}
+        if self.ui_mode(cp) != "off":
+            servers["sdlc-ui"] = self.ui_local_server()
         return servers
+
+    def ui_mode(self, cp) -> str:
+        """auto (default): panels in editors that support MCP Apps; on: always list the tools; off: no server."""
+        mode = cp.get("ui", "mode", fallback="auto").strip().lower()
+        return mode if mode in ("auto", "on", "off") else "auto"
+
+    def ui_local_server(self) -> dict:
+        python = sys.executable or ("py" if sys.platform == "win32" else "python3")
+        return {"type": "stdio", "command": python, "args": [str(self.home / "scripts" / "sdlc_ui_mcp.py")]}
+
+    def install_ui(self, cp):
+        """The A2UI panel ships prebuilt in scripts/ui/ (copied by install_core); check it arrived intact."""
+        if self.ui_mode(cp) == "off":
+            self.done.append("Agent UI panels off ([ui] mode = off)")
+            return
+        bundle, meta = SRC / "scripts" / "ui" / "sdlc-ui.html", SRC / "scripts" / "ui" / "sdlc-ui.json"
+        try:
+            info = json.loads(meta.read_text(encoding="utf-8"))
+            digest = hashlib.sha256(bundle.read_bytes()).hexdigest()
+        except (OSError, ValueError):
+            self.notes.append("Agent UI bundle scripts/ui/sdlc-ui.html is missing: panels stay off. "
+                              "Rebuild it with `npm ci && npm run build` in ui/, then re-run the installer.")
+            return
+        if digest != info.get("sha256"):
+            self.notes.append("scripts/ui/sdlc-ui.html does not match scripts/ui/sdlc-ui.json (edited by hand?). "
+                              "Rebuild it in ui/ with `npm run build`.")
+        a2 = info.get("a2ui", {})
+        self.done.append(f"Agent UI panels (A2UI {a2.get('protocol', '1.0')}, @a2ui/lit {a2.get('lit', '?')}) -> "
+                         f"`sdlc-ui` MCP server, shown in editors with MCP Apps (VS Code Copilot Chat, Cursor)")
 
     def _base_mcp(self, cp) -> dict:
         return {
@@ -278,6 +311,10 @@ class Installer:
             return
         block = data.setdefault(top_key, {})
         added = []
+        for name in set(self.old_manifest.get(manifest_key, [])) - set(servers):
+            if name in block:  # ours from an earlier install, no longer wanted (e.g. [ui] mode = off)
+                block.pop(name)
+                self.done.append(f"Removed MCP server `{name}` from {path} (turned off in the config)")
         for name, conf in servers.items():
             if name in block and block[name] != conf and name not in self.old_manifest.get(manifest_key, []) \
                     and not T.is_orbit_legacy(name, block[name], conf):
@@ -327,7 +364,7 @@ class Installer:
         self.manual.append(
             "Sign in to Jira and GitLab once (OAuth in your browser):\n"
             "      VS Code > Command Palette > `MCP: List Servers` > `atlassian` > Start Server > approve in browser.\n"
-            "      Repeat for `gitlab`. Trust the servers if VS Code asks. (`gitlab-orbit` is local and needs no sign-in.)\n"
+            "      Repeat for `gitlab`. Trust the servers if VS Code asks. (`gitlab-orbit` and `sdlc-ui` are local and need no sign-in.)\n"
             "      If they don't appear: run `MCP: Open User Configuration` and add under \"servers\":\n"
             + "\n".join("      " + ln for ln in json.dumps(
                 {n: T.shape_server(c, "typed") for n, c in servers.items()}, indent=2).splitlines()))
@@ -570,6 +607,13 @@ class Installer:
                 out += [f"   - {s}" for s in it.get("steps", [])]
         return out
 
+    def report_data(self) -> dict:
+        """The installation report as data (install-report.json): read by the `sdlc-ui` panels."""
+        return {"version": VERSION, "installed_at": self.manifest["installed_at"], "dry_run": self.dry,
+                "source": str(SRC), "targets": list(self.targets), "done": list(self.done),
+                "manual": list(self.manual), "notes": list(self.notes), "checklist": list(self.checks or []),
+                "hooks": list(self.hooks or [])}
+
     def finish(self):
         if "copilot" in self.targets:
           self.manual.append("Reload VS Code (`Developer: Reload Window`). In Copilot Chat open the agent picker: you should see "
@@ -599,6 +643,12 @@ class Installer:
         report += ["", f"User manual: {(self.home / 'USER_MANUAL.md').as_posix()}", ""]
         text = "\n".join(report)
         self._write(self.home / "MANUAL_STEPS.md", text)
+        data = self.report_data()
+        self._write(self.home / "install-report.json", json.dumps(data, indent=2) + "\n")
+        if getattr(self.args, "report_json", None):  # also in a dry run: the agent UI previews it
+            out = Path(self.args.report_json).expanduser()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         self._write(self.manifest_path, json.dumps(self.manifest, indent=2) + "\n")
         print("\n" + "=" * 72)
         print(f"  SDLC AI Toolkit {VERSION} {'(dry run - nothing written)' if self.dry else 'installed'}")
@@ -634,6 +684,7 @@ class Installer:
             self.install_mcp(cp)
         self.install_other_targets(cp)
         self.install_orbit(cp, root)
+        self.install_ui(cp)
         self.install_hooks(root)
         self.optional_tools()
         self.post_install_checklist(root)
@@ -706,6 +757,8 @@ def main():
     ap.add_argument("--target", default="auto", metavar="EDITORS",
                     help="editors to install into: auto (default: Copilot + every editor found), all, or a comma list of "
                          + ", ".join(T.ALL))
+    ap.add_argument("--report-json", metavar="FILE",
+                    help="also write the installation report as JSON to FILE (works with --dry-run)")
     ap.add_argument("--copilot-home", help=argparse.SUPPRESS)
     args = ap.parse_args()
     for stream in (sys.stdout, sys.stderr):

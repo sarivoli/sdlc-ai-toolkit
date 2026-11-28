@@ -1,0 +1,11 @@
+{
+  "name": "sdlc-ui",
+  "version": "1.0.0",
+  "a2ui": {
+    "lit": "0.16.0",
+    "web_core": "0.16.1",
+    "protocol": "1.0"
+  },
+  "sha256": "2d347bda74544b417671e88c6e7b4f99be24687ab74ff4c2db9a62d72c8ef1a1",
+  "bytes": 927540
+}

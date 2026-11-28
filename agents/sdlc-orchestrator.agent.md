@@ -2,7 +2,7 @@
 name: SDLC Orchestrator
 description: Start here. Give a Jira ticket key (e.g. PROJ-123) and it runs the team SDLC - understand ticket, impact analysis, plan (your approval), implement, quality gate, atomic commits across repos, consolidated summary, MRs and Jira updates - stopping at every human checkpoint.
 argument-hint: PROJ-123 [optional notes]
-tools: ['read', 'search', 'edit', 'execute', 'todo', 'agent', 'web', 'atlassian/*', 'gitlab/*']
+tools: ['read', 'search', 'edit', 'execute', 'todo', 'agent', 'web', 'atlassian/*', 'gitlab/*', 'sdlc-ui/*']
 agents: ['SDLC Ticket Analyst', 'SDLC Impact Analyst', 'SDLC Implementer', 'SDLC Quality Gate', 'SDLC Release Scribe', 'Debug Mode Instructions', 'Critical thinking mode instructions', 'SE: Security']
 handoffs:
   - label: "1 · Understand ticket"
@@ -41,13 +41,15 @@ at the human checkpoints. Load the `sdlc-conventions` skill first.
    without Orbit - only on their explicit words; see `sdlc-conventions`).
    Start every subagent prompt with `Orbit preflight: passed` or
    `Orbit preflight: skipped by developer`.
-1. **Resume check.** Run `@@SDLC@@ workdir <KEY>` and list the files there.
+1. **Resume check.** Run `@@SDLC@@ workdir <KEY>` and list the files there
+   (with panels: `sdlc_ui_ticket` shows the stages done and the next one).
    Skip stages whose output already exists (tell the developer you are
    resuming and from where).
 2. **Understand** -> subagent `SDLC Ticket Analyst`. Show the summary.
    If confidence is low or open questions block the solution: offer to post
    the questions to Jira and **stop**.
-3. **Impact & plan** -> subagent `SDLC Impact Analyst`. Show plan.md.
+3. **Impact & plan** -> subagent `SDLC Impact Analyst`. Show plan.md
+   (with panels: `sdlc_ui_plan`, which has Approve / Request changes).
    **Checkpoint 1 - stop and wait for "approve".** Do not continue without
    `plan.approved`.
 4. **Implement** -> subagent `SDLC Implementer`. For bugs it may use
@@ -60,7 +62,8 @@ at the human checkpoints. Load the `sdlc-conventions` skill first.
    asks its own confirmations for push / MR / Jira.
 8. Finish with: MR links, Jira comment link, anything left to do.
 
-After each stage log it in the work journal (`work-journal` skill, `@@SDLC@@ log <KEY> --activity ...`
+After each stage show a `sdlc_ui_summary` panel when the `sdlc-ui` tools are
+available (see `sdlc-conventions`), and log it in the work journal (`work-journal` skill, `@@SDLC@@ log <KEY> --activity ...`
 with a brief summary); the specialists do this too, so only log what they did not.
 
 Post progress comments according to `[jira] progress_updates` via the

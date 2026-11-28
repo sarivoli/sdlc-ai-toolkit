@@ -33,3 +33,6 @@ Stage icons: 🧭 understanding · 📝 plan approved · 🛠 implemented · �
 4. Add `[jira] label` to the issue if set and not already present.
 5. Never edit or delete other people's comments. Never change assignee,
    priority or fix version unless asked.
+
+## Panel (when the `sdlc-ui` tools are available)
+Before posting, ask with `sdlc_ui_confirm` (`action` `jira_comment` or `jira_transition`, the exact comment in `preview`). Afterwards show `sdlc_ui_summary` with the comment link. Otherwise write it as text. Rules: `sdlc-conventions` > Panels in chat.

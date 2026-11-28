@@ -269,7 +269,7 @@ class InstallerTests(unittest.TestCase):
             for s in ("jira-ticket-digest", "git-commit", "security-review"):
                 self.assertTrue((home / "skills" / s / "SKILL.md").exists(), s)
             mcp = json.loads((home / "mcp-config.json").read_text())["mcpServers"]
-            self.assertEqual(set(mcp), {"context7", "atlassian", "gitlab", "gitlab-orbit"})
+            self.assertEqual(set(mcp), {"context7", "atlassian", "gitlab", "gitlab-orbit", "sdlc-ui"})
             self.assertTrue((home / "sdlc-toolkit" / "MANUAL_STEPS.md").exists())
             steps_md = (home / "sdlc-toolkit" / "MANUAL_STEPS.md").read_text(encoding="utf-8")
             self.assertNotIn("still placeholders", steps_md)
@@ -779,3 +779,132 @@ class InstallerHookReportTests(unittest.TestCase):
             self.assertIn("[installed] commit-msg (git hook)", p.stdout)  # still on disk, reported as such
             m = json.loads((tmp / ".copilot" / "sdlc-toolkit" / "manifest.json").read_text())
             self.assertEqual(m["hooks"], [str(repo)])  # --no-hooks keeps track of hooks installed earlier
+
+
+class AgentUiTests(unittest.TestCase):
+    """scripts/sdlc_ui_mcp.py: A2UI panels served as an MCP App, and the installer wiring."""
+    UI_CAPS = {"extensions": {"io.modelcontextprotocol/ui": {"mimeTypes": ["text/html;profile=mcp-app"]}}}
+
+    def rpc(self, messages, cwd: Path, env=None):
+        e = dict(os.environ, SDLC_TOOLKIT_HOME=str(ROOT), **(env or {}))
+        lines = "".join(json.dumps(m) + "\n" for m in messages)
+        p = subprocess.run([sys.executable, str(ROOT / "scripts" / "sdlc_ui_mcp.py")], input=lines, cwd=str(cwd),
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", env=e, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return {m.get("id"): m for m in (json.loads(ln) for ln in p.stdout.splitlines())}
+
+    @staticmethod
+    def init(caps=None, name="test-host"):
+        return {"jsonrpc": "2.0", "id": 0, "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18", "capabilities": caps or {}, "clientInfo": {"name": name}}}
+
+    @staticmethod
+    def call(i, name, args):
+        return {"jsonrpc": "2.0", "id": i, "method": "tools/call", "params": {"name": name, "arguments": args}}
+
+    def payload(self, result) -> list:
+        self.assertFalse(result.get("isError"), result)
+        res = [c for c in result["content"] if c["type"] == "resource"]
+        self.assertEqual(res[0]["resource"]["mimeType"], "application/a2ui+json")
+        msgs = json.loads(res[0]["resource"]["text"])
+        import a2ui
+        self.assertEqual(a2ui.check(msgs), [])
+        self.assertEqual(msgs[0]["version"], "1.0")
+        return msgs
+
+    @staticmethod
+    def actions(msgs) -> list:
+        return [c["action"]["event"] for c in msgs[0]["createSurface"]["components"] if c["component"] == "Button"]
+
+    def test_terminal_clients_get_no_tools(self):
+        with tempfile.TemporaryDirectory() as t:
+            out = self.rpc([self.init(name="claude-code"), {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                            self.call(2, "sdlc_ui_summary", {"title": "x", "status": "done"})], Path(t))
+            self.assertEqual(out[1]["result"]["tools"], [])
+            self.assertEqual(out[2]["error"]["code"], -32602)
+
+    def test_tools_resource_and_screens(self):
+        with tempfile.TemporaryDirectory() as t:
+            ws = Path(t)
+            wd = ws / ".sdlc" / "PROJ-7"
+            wd.mkdir(parents=True)
+            (wd / "plan.md").write_text("# Plan\n\n1. change login.py\n", encoding="utf-8")
+            (wd / "impact.md").write_text("# Impact\n", encoding="utf-8")
+            (wd / "quality.json").write_text(json.dumps({"ticket_key": "PROJ-7", "result": "FAIL", "repos": [
+                {"name": "app", "result": "FAIL", "changed_files": ["a.py"], "checks": [
+                    {"check": "lint", "command": "ruff", "status": "fail", "details": "E501", "required": True},
+                    {"check": "tests", "command": "pytest", "status": "pass", "details": "ok"}]}]}), encoding="utf-8")
+            out = self.rpc([
+                self.init(self.UI_CAPS),
+                {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                {"jsonrpc": "2.0", "id": 2, "method": "resources/read", "params": {"uri": "ui://sdlc/app"}},
+                self.call(3, "sdlc_ui_confirm", {"title": "Push", "action": "push", "preview": "git push",
+                                                 "allow_comment": True}),
+                self.call(4, "sdlc_ui_summary", {"title": "Done", "status": "done", "items": [{"label": "a", "state": "warn"}],
+                                                 "links": [{"label": "ok", "url": "https://x.example/1"},
+                                                           {"label": "bad", "url": "javascript:alert(1)"}],
+                                                 "next_steps": [{"label": "Next", "reply": "continue"}]}),
+                self.call(5, "sdlc_ui_plan", {"ticket": "PROJ-7"}),
+                self.call(6, "sdlc_ui_quality", {"ticket": "PROJ-7"}),
+                self.call(7, "sdlc_ui_ticket", {"ticket": "PROJ-7"}),
+                self.call(8, "sdlc_ui_plan", {"ticket": "../etc"}),
+                self.call(9, "sdlc_ui_quality", {"ticket": "PROJ-8"}),
+            ], ws, {"SDLC_WORKSPACE_ROOT": str(ws)})
+            self.assertEqual(out[0]["result"]["serverInfo"]["name"], "sdlc-ui")
+            tools = {t["name"]: t for t in out[1]["result"]["tools"]}
+            self.assertIn("sdlc_ui_confirm", tools)
+            self.assertEqual(tools["sdlc_ui_plan"]["_meta"]["ui"]["resourceUri"], "ui://sdlc/app")
+            self.assertEqual(tools["sdlc_ui_checklist_refresh"]["_meta"]["ui"]["visibility"], ["app"])
+            html = out[2]["result"]["contents"][0]
+            self.assertEqual(html["mimeType"], "text/html;profile=mcp-app")
+            self.assertIn("<script", html["text"])
+            ev = self.actions(self.payload(out[3]["result"]))
+            self.assertEqual([e["context"]["text"] for e in ev], ["no", "changes", "yes"])  # buttons only reply in chat
+            self.assertTrue(all(e["name"] == "sdlc.chat" for e in ev))
+            self.assertIn("Wait for the developer", out[3]["result"]["content"][0]["text"])
+            ev = self.actions(self.payload(out[4]["result"]))
+            self.assertEqual([e["name"] for e in ev], ["sdlc.open", "sdlc.chat"])  # javascript: link dropped
+            ev = self.actions(self.payload(out[5]["result"]))
+            self.assertEqual(ev[-1]["context"]["text"], "approve")
+            self.assertFalse((wd / "plan.approved").exists())  # a panel never approves by itself
+            self.assertIn("FAIL", out[6]["result"]["content"][0]["text"])
+            self.payload(out[6]["result"])
+            self.assertIn("3/8 stages done; next: Ticket understood", out[7]["result"]["content"][0]["text"])
+            self.assertTrue(out[8]["result"]["isError"])
+            self.assertTrue(out[9]["result"]["isError"])
+
+    def test_known_editor_without_declared_extension(self):
+        with tempfile.TemporaryDirectory() as t:
+            out = self.rpc([self.init(name="Visual Studio Code"), {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}], Path(t))
+            self.assertTrue(out[1]["result"]["tools"])
+
+    def test_bundle_matches_manifest(self):
+        import hashlib
+        meta = json.loads((ROOT / "scripts" / "ui" / "sdlc-ui.json").read_text(encoding="utf-8"))
+        data = (ROOT / "scripts" / "ui" / "sdlc-ui.html").read_bytes()
+        self.assertEqual(hashlib.sha256(data).hexdigest(), meta["sha256"])
+        self.assertEqual(meta["a2ui"]["protocol"], "1.0")
+
+    def test_installer_registers_server_and_writes_report(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            (tmp / "work").mkdir()
+            env = {"HOME": t, "USERPROFILE": t, "COPILOT_HOME": str(tmp / ".copilot"), "XDG_CONFIG_HOME": str(tmp / ".config")}
+            cmd = [sys.executable, str(ROOT / "install.py"), "--no-hooks", "--set", "orbit.enabled=no",
+                   "--workspace", str(tmp / "work"), "--target", "copilot,claude,codex"]
+            run(*cmd, "--dry-run", "--report-json", str(tmp / "preview.json"), env=env)
+            preview = json.loads((tmp / "preview.json").read_text(encoding="utf-8"))
+            self.assertTrue(preview["dry_run"])
+            self.assertTrue(any("Agent UI panels" in d for d in preview["done"]))
+            self.assertFalse((tmp / ".copilot" / "sdlc-toolkit").exists())  # dry run wrote nothing else
+            run(*cmd, env=env)
+            home = tmp / ".copilot" / "sdlc-toolkit"
+            self.assertTrue((home / "scripts" / "ui" / "sdlc-ui.html").exists())
+            rep = json.loads((home / "install-report.json").read_text(encoding="utf-8"))
+            self.assertFalse(rep["dry_run"])
+            self.assertEqual(json.loads((home / "manifest.json").read_text())["source"], str(ROOT))
+            ui = json.loads((tmp / ".claude.json").read_text())["mcpServers"]["sdlc-ui"]
+            self.assertTrue(ui["args"][0].endswith("sdlc_ui_mcp.py"))
+            self.assertIn('[mcp_servers."sdlc-ui"]', (tmp / ".codex" / "config.toml").read_text())
+            run(*cmd, "--set", "ui.mode=off", env=env)
+            self.assertNotIn("sdlc-ui", json.loads((tmp / ".claude.json").read_text())["mcpServers"])

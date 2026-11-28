@@ -5,6 +5,10 @@ a helper CLI that a developer installs into their own GitHub Copilot setup.
 
 ## If the user asks to install, set up, upgrade or "make this available"
 
+0. If the `sdlc_ui_install_preview` tool is available (toolkit already installed, editor
+   with MCP Apps), call it with `source` = this repository and the arguments you plan to
+   use: it shows a dry run as a panel with Install / Cancel. Run the installer only after
+   the developer's "yes" in the chat. Without the tool, describe what you will run and ask.
 1. Run the installer from the repository root:
    - macOS/Linux: `python3 install.py`
    - Windows: `py -3 install.py` (or `python install.py`)
@@ -22,6 +26,9 @@ a helper CLI that a developer installs into their own GitHub Copilot setup.
    verbatim, then the **"HOOKS ON THIS SYSTEM"** list, and tell them the same report is saved at
    `~/.copilot/sdlc-toolkit/MANUAL_STEPS.md`. Open checklist items come first:
    offer to run the printed Orbit index command for them.
+   If the `sdlc_ui_install_report` tool is available (after an update, or once the editor has
+   reloaded the new `sdlc-ui` server), show the same report as a panel with it instead of
+   pasting the three sections.
 4. Offer to open `docs/USER_MANUAL.md`.
 
 ## If the user asks to uninstall

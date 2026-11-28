@@ -28,3 +28,6 @@ Load `sdlc-conventions`. Requires `<workdir>/commits.json` and the rendered
 5. Re-run `@@SDLC@@ summary <KEY>` and update every MR description with the
    re-rendered `mr-<repo>.md` (now containing sibling MR links).
 6. Never approve, merge, or close MRs.
+
+## Panel (when the `sdlc-ui` tools are available)
+Before creating MRs ask with `sdlc_ui_confirm` (`action` `create_mr`, the MR title and description in `preview`). Afterwards show `sdlc_ui_summary` with each MR as a link. Otherwise write it as text. Rules: `sdlc-conventions` > Panels in chat.

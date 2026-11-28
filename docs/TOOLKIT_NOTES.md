@@ -21,6 +21,7 @@ understand -> impact + plan -> **[approve]** -> implement -> quality gate ->
 | Templates (9) | `templates/` | Every outbound text is rendered from these. Override precedence: repo `.sdlc/templates` > workspace `.sdlc/templates` > installed default. |
 | Config | `config/toolkit.ini` | Team defaults; personal overrides in `~/.copilot/sdlc-toolkit/toolkit.local.ini` (written by `--set`/`--workspace`). |
 | Vendor | `vendor/awesome-copilot/` | MIT, pinned; refresh via `scripts/update_vendor.py`. |
+| Agent UI | `scripts/sdlc_ui_mcp.py`, `scripts/a2ui.py`, `scripts/ui/sdlc-ui.html` (built from `ui/`) | Local stdio MCP server `sdlc-ui`: A2UI v1.0 panels as an MCP App (`ui://sdlc/app`). See *Agent UI panels* below. |
 | Tests | `tests/test_toolkit.py` | |
 
 `@@SDLC@@` / `@@TOOLKIT_HOME@@` in agents/skills are replaced at install time - keep them.
@@ -116,6 +117,37 @@ Gemini / Cursor hook entries that mention the toolkit or Orbit. `install-hooks` 
 JSONL at `~/.copilot/sdlc-journal/worklog.jsonl` (outside the toolkit home so it survives
 uninstall; `SDLC_JOURNAL` env overrides). Agents log via the `work-journal` skill; the
 `SDLC Work Journal` agent produces reports. See USER_MANUAL section 16.
+
+## Agent UI panels (A2UI as an MCP App)
+- **Why MCP Apps:** no editor renders A2UI natively. MCP Apps (`ui://` HTML
+  resources shown in a sandboxed iframe) are supported by VS Code Copilot Chat
+  and Cursor, so the server ships its own renderer: `ui/` (Vite + `@a2ui/lit`
+  0.16 + `@a2ui/web_core` + `@modelcontextprotocol/ext-apps`) builds one
+  self-contained `scripts/ui/sdlc-ui.html` (about 0.9 MB, inlined JS/CSS),
+  committed so that users need no Node.js. `scripts/ui/sdlc-ui.json` records
+  the versions and SHA-256; the installer and a test check it.
+- **Server:** `scripts/sdlc_ui_mcp.py`, stdlib only. Model-facing tools
+  `sdlc_ui_confirm`, `sdlc_ui_summary`, `sdlc_ui_plan`, `sdlc_ui_quality`,
+  `sdlc_ui_ticket`, `sdlc_ui_install_preview`, `sdlc_ui_install_report`,
+  `sdlc_ui_checklist`; app-only `sdlc_ui_checklist_refresh`. Each returns a
+  short text for the model plus an `application/a2ui+json` resource
+  (`createSurface` with inline components and data model) built by
+  `scripts/a2ui.py` from basic-catalog components only.
+- **Who gets tools:** `[ui] mode = auto` lists tools only when the client
+  declares the `io.modelcontextprotocol/ui` extension or is a known MCP Apps
+  host (VS Code, Cursor, ...); terminal CLIs get none and keep text.
+- **Buttons:** `sdlc.chat` actions send a reply into the chat (`ui/message`),
+  `sdlc.open` opens an http(s) link, other names call app-only tools. No
+  panel action approves, pushes or writes: consent stays a chat message.
+- **Icons:** sent as Material SVG paths (`Icon {svgPath}`) because the iframe
+  CSP blocks icon fonts.
+- **Install report:** `install.py` writes `install-report.json` next to
+  `MANUAL_STEPS.md`; `--report-json FILE` writes it also in a dry run, which
+  `sdlc_ui_install_preview` uses.
+- **Rebuild the panel:** `cd ui && npm ci && npm run build` (writes
+  `scripts/ui/sdlc-ui.*`). Bump `@a2ui/*` versions in `ui/package.json`.
+- **Limits:** the A2UI basic catalog has no table, so tables are rows of
+  icon, label and status; colours come from the host theme, not per status.
 
 ## Change workflow
 Edit templates / `config/toolkit.ini` / agents / skills -> `python3 -m unittest discover -s tests`

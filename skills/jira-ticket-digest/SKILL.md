@@ -35,3 +35,6 @@ Load the `sdlc-conventions` skill first.
 ## Output quality bar
 A teammate who never saw the ticket can explain the problem, the acceptance
 criteria and what is still unclear after reading only this summary.
+
+## Panel (when the `sdlc-ui` tools are available)
+End with `sdlc_ui_summary` (status `done`, or `needs_input` when open questions block): ticket title, type and priority as facts, acceptance criteria as items, the Jira link, and "Impact & plan" as the next step. Otherwise write it as text. Rules: `sdlc-conventions` > Panels in chat.

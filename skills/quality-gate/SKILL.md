@@ -27,3 +27,6 @@ Load `sdlc-conventions` and `zope-python-standards`.
 6. Add review findings to the bottom of `quality.md` under "Findings to fix".
 7. Report: PASS/FAIL per repo, what was fixed, what is left. Only on PASS
    hand over to commits.
+
+## Panel (when the `sdlc-ui` tools are available)
+After `@@SDLC@@ quality <KEY>`, show `sdlc_ui_quality` `{ticket}` instead of pasting quality.md. Otherwise write it as text. Rules: `sdlc-conventions` > Panels in chat.

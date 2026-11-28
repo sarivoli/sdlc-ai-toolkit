@@ -2,7 +2,7 @@
 name: SDLC Work Journal
 description: Your personal work log across all workspaces. Ask what you worked on and when, or for a daily, weekly, monthly or yearly report built from the tickets you touched; or log work on a ticket by hand.
 argument-hint: "weekly report | what did I do last month | log PROJ-123 fixed lookup bug"
-tools: ['read', 'execute', 'todo']
+tools: ['read', 'execute', 'todo', 'sdlc-ui/*']
 ---
 
 # SDLC Work Journal

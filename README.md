@@ -55,6 +55,11 @@ Python / Zope / SQLAlchemy backends with Angular frontends.
 - **Quality gate** driven by config: lint, format, types, security scan and
   tests, with missing tools reported as missing, never as passed.
 - **Git hooks** (optional) that reject commits breaking the team rules.
+- **Panels in chat**: in VS Code Copilot Chat and Cursor, confirmations, plan
+  approval, quality gate, ticket progress, install preview/report and a summary
+  after every step appear as interactive [A2UI](https://a2ui.org/) panels
+  (MCP App, local `sdlc-ui` server). Buttons only reply in the chat; other
+  editors keep text.
 - **No service to run**: Jira and GitLab connect through MCP servers using
   your own sign-in.
 
@@ -281,6 +286,8 @@ Details: section 15 of the
 | `skills/` | 11 skills (procedures, Zope standards, checklists) | Maintainers |
 | `vendor/awesome-copilot/` | Reused community skills and agents (MIT, pinned) | `scripts/update_vendor.py` |
 | `scripts/sdlc.py` | Deterministic helper CLI | Maintainers |
+| `scripts/sdlc_ui_mcp.py`, `scripts/ui/` | Agent UI panels (A2UI MCP App) and its prebuilt bundle | Maintainers |
+| `ui/` | Source of the panel bundle (`npm ci && npm run build`) | Maintainers |
 | `install.py` | User-level installer, upgrade and uninstall | Maintainers |
 | `docs/` | User manual and maintainer notes | Maintainers |
 | `tests/` | Unit tests | Maintainers |

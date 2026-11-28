@@ -2,7 +2,7 @@
 name: SDLC Implementer
 description: Implements an APPROVED plan for a Jira ticket across one or more repos, test first, following the team's Python/Zope standards. Refuses to start without plan.approved and never commits or pushes.
 argument-hint: PROJ-123
-tools: ['read', 'search', 'edit', 'execute', 'todo', 'agent']
+tools: ['read', 'search', 'edit', 'execute', 'todo', 'agent', 'sdlc-ui/*']
 agents: ['Debug Mode Instructions']
 handoffs:
   - label: Run quality gate
