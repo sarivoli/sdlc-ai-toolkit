@@ -875,7 +875,29 @@ class AgentUiTests(unittest.TestCase):
             st = json.loads((ws / "ui-status.json").read_text(encoding="utf-8"))  # read by `sdlc doctor`
             self.assertEqual((st["client"], st["panels"], st["ui_extension_declared"]), ("test-host", True, True))
             self.assertTrue(st["panel_loaded_by_client"])
-            self.assertEqual(st["last_tool"], "sdlc_ui_ticket")
+            self.assertEqual((st["last_tool"], st["last_tool_ok"]), ("sdlc_ui_quality", False))  # the PROJ-8 error
+            self.assertIn("No quality report", st["last_error"])
+
+    def test_render_fallback_for_hosts_that_drop_the_result(self):
+        """Copilot CLI agent host: panel shown, tool result not forwarded. The panel asks sdlc_ui_render."""
+        with tempfile.TemporaryDirectory() as t:
+            args = {"title": "Work log", "status": "info", "items": [{"label": "PROJ-1", "state": "done"}]}
+            out = self.rpc([
+                self.init(self.UI_CAPS),
+                self.call(1, "sdlc_ui_summary", args),
+                self.call(2, "sdlc_ui_render", {"tool": "sdlc_ui_summary", "arguments": args}),
+                self.call(3, "sdlc_ui_render", {"arguments": {"title": "Push", "action": "push"}}),  # guessed: confirm
+                self.call(4, "sdlc_ui_render", {}),  # nothing forwarded at all: the panel built last
+                self.call(5, "sdlc_ui_render", {"tool": "sdlc_ui_render"}),
+            ], Path(t))
+            first = self.payload(out[1]["result"])
+            self.assertEqual(out[1]["result"]["_meta"]["sdlc-ui/a2ui"], first)  # for hosts that drop resources
+            again = self.payload(out[2]["result"])
+            self.assertEqual(again[0]["createSurface"]["components"], first[0]["createSurface"]["components"])
+            self.assertIn("Confirmation panel", out[3]["result"]["content"][0]["text"])
+            last = self.payload(out[4]["result"])
+            self.assertIn("confirm", last[0]["createSurface"]["surfaceId"])
+            self.assertTrue(out[5]["result"]["isError"])
 
     def test_known_editor_without_declared_extension(self):
         with tempfile.TemporaryDirectory() as t:
