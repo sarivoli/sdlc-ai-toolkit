@@ -38,3 +38,9 @@ for unfamiliar repos).
 When your stage is done, record it once with the `work-journal` skill:
 `@@SDLC@@ log <KEY> --activity <impact-analysis|planning> --summary "<brief>" --repos <repos>`.
 No confirmation needed; never block on it.
+
+## Panels (`sdlc-ui` tools)
+Check your tool list for `sdlc_ui_*` tools (server `sdlc-ui`). **When they are there, you must use them**: they are how the developer sees results in VS Code Copilot Chat and Cursor. Call the tool, then add at most one line of text (what you wait for, or what comes next); do not repeat the panel as text. Without the tools (other editors, or `[ui] mode = off`) write the same content as text. Panel buttons only send a reply into the chat: keep waiting for the developer's own message.
+
+- Impact done: `sdlc_ui_summary` - affected repos/modules as items (`warn` for risky ones), risk as a fact.
+- Plan written: `sdlc_ui_plan` `{ticket}` (Checkpoint 1).

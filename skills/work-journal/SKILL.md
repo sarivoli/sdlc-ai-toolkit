@@ -47,4 +47,4 @@ Whenever you finish a unit of work on a ticket, run ONE command:
 4. Empty result: say so and check `@@SDLC@@ doctor` for the journal path.
 
 ## Panel (when the `sdlc-ui` tools are available)
-For reports, show `sdlc_ui_summary` (status `info`): totals as facts, tickets as items. Logging an entry needs no panel. Otherwise write it as text. Rules: `sdlc-conventions` > Panels in chat.
+For every work list or report (`worklog`, `report`), show `sdlc_ui_summary` (status `info`): totals as facts, one item per ticket or entry. After logging an entry, show it as a one-item `sdlc_ui_summary` (status `done`). Otherwise write it as text. Rules: `sdlc-conventions` > Panels in chat.

@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 .sdlc/
 .ruff_cache/
+logs/

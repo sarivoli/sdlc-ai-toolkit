@@ -722,8 +722,25 @@ No Node.js is needed on your machine.
   recognise yet).
 - `off`: no `sdlc-ui` server; it is removed from your editors on the next install.
 
-**No panel appears?** Reload the editor window after installing, and check
-that `sdlc-ui` is running (VS Code: `MCP: List Servers`). In VS Code, MCP Apps
-need a recent version. Copilot Business or Enterprise also needs MCP servers
-allowed by your org admin.
+**No panel appears?** Check in this order:
+
+1. `python3 ~/.copilot/sdlc-toolkit/scripts/sdlc.py doctor` shows *Agent UI
+   panels*: which editor connected last, whether panels are on, and the last
+   panel shown. "No panel shown yet" means the model answered in text and did
+   not call a `sdlc_ui_*` tool.
+2. Use an **SDLC agent** from the agent picker (the default Copilot agent does
+   not load the toolkit's panel rules), or enable the `sdlc-ui` tools in the
+   chat's tools picker.
+3. Call one panel directly to test the editor: in Copilot Chat type
+   `#sdlc_ui_summary show a test summary`. A panel means the editor is fine.
+   Text only, with a tool call shown, means the editor does not render MCP Apps.
+4. VS Code: `chat.mcp.apps.enabled` must be on (default). **Copilot Business /
+   Enterprise:** MCP Apps is a preview feature; if the Copilot Chat log says
+   "Copilot preview features are disabled by organizational policy", your org
+   admin must allow **Editor preview features** in the GitHub organization's
+   Copilot policies. MCP servers must be allowed there too.
+5. If `chat.mcp.discovery.enabled` includes `copilot`, VS Code also loads the
+   servers from `~/.copilot/mcp-config.json`, so `sdlc-ui` and `gitlab-orbit`
+   appear twice. That is harmless; turn the discovery off if you see duplicate
+   tools.
 

@@ -54,6 +54,23 @@ def log(msg: str):
     print(f"[sdlc-ui] {msg}", file=sys.stderr, flush=True)
 
 
+STATUS_FILE = Path(os.environ.get("SDLC_UI_STATUS_FILE") or HERE.parent / "logs" / "sdlc-ui-status.json")
+
+
+def record(**fields):
+    """Last client and tool call, for `sdlc doctor` (why are there no panels?). Never fails the server."""
+    try:
+        data = json.loads(STATUS_FILE.read_text(encoding="utf-8")) if STATUS_FILE.exists() else {}
+    except (OSError, ValueError):
+        data = {}
+    data.update(fields, updated_at=__import__("datetime").datetime.now().isoformat(timespec="seconds"))
+    try:
+        STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        STATUS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def load_cp():
     try:
         return S.load_config()
@@ -644,6 +661,7 @@ class Server:
         except Exception as exc:  # never kill the server on one bad call
             log(f"{name}: {type(exc).__name__}: {exc}")
             return {"content": [{"type": "text", "text": f"{type(exc).__name__}: {exc}"}], "isError": True}
+        record(last_tool=name, last_tool_ok=True)
         problems = A.check(messages)
         if problems:
             return {"content": [{"type": "text", "text": "UI payload invalid: " + "; ".join(problems)}], "isError": True}
@@ -672,6 +690,10 @@ class Server:
             self.client_roots = isinstance((params.get("capabilities") or {}).get("roots"), dict)
             info = params.get("clientInfo") or {}
             log(f"client {info.get('name')!r}: panels {'on' if self.ui else 'off'} (mode {mode})")
+            caps = params.get("capabilities") or {}
+            record(client=info.get("name"), client_version=info.get("version"), mode=mode, panels=self.ui,
+                   ui_extension_declared=UI_EXTENSION in (caps.get("extensions") or {}),
+                   capabilities=sorted(caps))
             want = params.get("protocolVersion")
             return ok({
                 "protocolVersion": want if want in PROTOCOLS else PROTOCOLS[1],
@@ -699,6 +721,7 @@ class Server:
         if method == "resources/templates/list":
             return ok({"resourceTemplates": []})
         if method == "resources/read":
+            record(panel_loaded_by_client=True)
             if params.get("uri") != APP_URI:
                 return err(-32002, f"Resource not found: {params.get('uri')}")
             try:

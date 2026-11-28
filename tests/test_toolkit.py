@@ -786,7 +786,7 @@ class AgentUiTests(unittest.TestCase):
     UI_CAPS = {"extensions": {"io.modelcontextprotocol/ui": {"mimeTypes": ["text/html;profile=mcp-app"]}}}
 
     def rpc(self, messages, cwd: Path, env=None):
-        e = dict(os.environ, SDLC_TOOLKIT_HOME=str(ROOT), **(env or {}))
+        e = dict(os.environ, SDLC_TOOLKIT_HOME=str(ROOT), SDLC_UI_STATUS_FILE=str(cwd / "ui-status.json"), **(env or {}))
         lines = "".join(json.dumps(m) + "\n" for m in messages)
         p = subprocess.run([sys.executable, str(ROOT / "scripts" / "sdlc_ui_mcp.py")], input=lines, cwd=str(cwd),
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", env=e, timeout=120)
@@ -872,6 +872,10 @@ class AgentUiTests(unittest.TestCase):
             self.assertIn("3/8 stages done; next: Ticket understood", out[7]["result"]["content"][0]["text"])
             self.assertTrue(out[8]["result"]["isError"])
             self.assertTrue(out[9]["result"]["isError"])
+            st = json.loads((ws / "ui-status.json").read_text(encoding="utf-8"))  # read by `sdlc doctor`
+            self.assertEqual((st["client"], st["panels"], st["ui_extension_declared"]), ("test-host", True, True))
+            self.assertTrue(st["panel_loaded_by_client"])
+            self.assertEqual(st["last_tool"], "sdlc_ui_ticket")
 
     def test_known_editor_without_declared_extension(self):
         with tempfile.TemporaryDirectory() as t:
