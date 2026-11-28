@@ -42,7 +42,8 @@ Python / Zope / SQLAlchemy backends with Angular frontends.
 - **QA hand-off**: after developer validation the ticket gets impacted
   screens, endpoints, use cases to validate, regression areas and test data.
 - **Orbit code graph**: a local GitLab Orbit knowledge graph, one per
-  workspace folder, backs callers, tests and reference searches.
+  workspace folder, backs callers, tests and reference searches. It is served
+  to every editor by a local `gitlab-orbit` MCP server (no GitLab sign-in).
 - **Automatic work journal**: every activity on a ticket (impact analysis,
   development, bugfix, ...) is logged with a brief note to one personal file
   shared by all VS Code workspaces. Ask the **SDLC Work Journal** agent for
@@ -200,7 +201,7 @@ overrides are saved by the installer to
 | `[gitlab]` | Group, default target branch |
 | `[mcp]` | MCP server endpoints |
 | `[journal]` | Work journal on/off and file location |
-| `[orbit]` | Orbit CLI install, indexing, hosted MCP, telemetry |
+| `[orbit]` | Orbit CLI install, indexing, MCP mode (local/remote/off), telemetry |
 | `[git]` | Branch convention, commit rules, protected branches |
 | `[quality]` | Lint, format, type, security and test commands |
 | `[workspace]` | Workspace folder, repo discovery depth, work dir |
@@ -238,7 +239,15 @@ the optional git hooks. Protected branches are never committed to.
 Impact analysis uses the [GitLab Orbit CLI](https://docs.gitlab.com/orbit/cli/)
 for callers, imports, tests and references. Each workspace folder (which may
 hold several repos) has its **own** graph in `<folder>/.sdlc/orbit`, so
-different products or versions never mix. Details: section 15 of the
+different products or versions never mix.
+
+The installer registers `gitlab-orbit` as a **local** MCP server
+(`scripts/orbit_mcp.py`, stdio) that wraps the Orbit CLI: it serves the graph
+of the folder your editor has open, indexes it on first start, and never calls
+GitLab. Check it with `MCP: List Servers` > `gitlab-orbit`. To index another
+folder by hand run `python3 ~/.copilot/sdlc-toolkit/scripts/sdlc.py orbit index`
+there. Set `[orbit] mcp_mode = remote` for the hosted GitLab endpoint instead.
+Details: section 15 of the
 [user manual](docs/USER_MANUAL.md) and the checklist
 [fullstack-trace-checklist.md](skills/impact-analysis/references/fullstack-trace-checklist.md).
 

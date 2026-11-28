@@ -285,5 +285,126 @@ class InstallerTests(unittest.TestCase):
             self.assertTrue((home / "sdlc-toolkit" / "toolkit.local.ini").exists())
 
 
+FAKE_ORBIT = """#!/usr/bin/env python3
+import json, os, sys
+a = sys.argv[1:]
+if a[:2] == ["workspace", "list"]:
+    print("[]")
+else:
+    print(json.dumps({"args": a, "cwd": os.getcwd(), "data": os.environ.get("ORBIT_DATA_DIR"),
+                      "no_gitlab": os.environ.get("ORBIT_NO_GITLAB"), "token": os.environ.get("GITLAB_TOKEN")}))
+"""
+
+
+def fake_orbit_bin(tmp: Path) -> Path:
+    b = tmp / "bin"
+    b.mkdir()
+    (b / "orbit").write_text(FAKE_ORBIT)
+    (b / "orbit").chmod(0o755)
+    return b
+
+
+@unittest.skipIf(os.name == "nt", "fake orbit CLI is a POSIX script")
+class OrbitMcpTests(unittest.TestCase):
+    def rpc(self, messages, tmp: Path, ws: Path):
+        env = dict(os.environ, PATH=f"{fake_orbit_bin(tmp)}{os.pathsep}{os.environ['PATH']}",
+                   SDLC_TOOLKIT_HOME=str(ROOT), GITLAB_TOKEN="secret")
+        lines = "".join((m if isinstance(m, str) else json.dumps(m)) + "\n" for m in messages)
+        p = subprocess.run([sys.executable, str(ROOT / "scripts" / "orbit_mcp.py"), "--workspace", str(ws), "--no-auto-index"],
+                           input=lines, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return [json.loads(ln) for ln in p.stdout.splitlines()]
+
+    def test_jsonrpc_and_tools(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            ws = tmp / "ws"
+            (ws / "repo1" / ".git").mkdir(parents=True)
+            call = lambda i, name, args: {"jsonrpc": "2.0", "id": i, "method": "tools/call",
+                                          "params": {"name": name, "arguments": args}}
+            out = self.rpc([
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-03-26"}},
+                {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                {"jsonrpc": "2.0", "id": 3, "method": "bogus"},
+                "not json",
+                call(4, "orbit_grep", {"query": "mr:rate limit"}),
+                call(5, "orbit_context", {"targets": ["https://gitlab.com/g/p/-/merge_requests/1"]}),
+                call(6, "orbit_grep", {"query": "hello", "word": True}),
+                call(7, "orbit_status", {}),
+                {"jsonrpc": "2.0", "id": 8, "method": "ping"},
+            ], tmp, ws)
+            by_id = {m.get("id"): m for m in out}
+            self.assertEqual(len(out), 9)  # the notification gets no reply
+            self.assertEqual(by_id[1]["result"]["protocolVersion"], "2025-03-26")
+            self.assertEqual(by_id[1]["result"]["serverInfo"]["name"], "gitlab-orbit")
+            self.assertEqual({t["name"] for t in by_id[2]["result"]["tools"]},
+                             {"orbit_status", "orbit_index", "orbit_grep", "orbit_context", "orbit_sql", "orbit_schema"})
+            self.assertEqual(by_id[3]["error"]["code"], -32601)
+            self.assertEqual(by_id[None]["error"]["code"], -32700)
+            for i in (4, 5):
+                self.assertTrue(by_id[i]["result"]["isError"])
+                self.assertIn("local only", by_id[i]["result"]["content"][0]["text"])
+            g = by_id[6]["result"]
+            self.assertFalse(g["isError"])
+            sent = json.loads(g["content"][0]["text"])
+            self.assertEqual(sent["args"][:2], ["grep", "-w"])
+            self.assertIn(str(ws / "repo1"), sent["args"])
+            self.assertEqual(sent["args"][-1], "hello")
+            self.assertEqual(sent["data"], str(ws / ".sdlc" / "orbit"))
+            self.assertEqual(sent["no_gitlab"], "1")
+            self.assertIsNone(sent["token"])  # GitLab credentials never reach the CLI
+            self.assertIn("Nothing indexed yet", by_id[7]["result"]["content"][0]["text"])
+            self.assertEqual(by_id[8]["result"], {})
+
+
+@unittest.skipIf(os.name == "nt", "fake orbit CLI is a POSIX script")
+class OrbitMigrationTests(unittest.TestCase):
+    def test_cloud_entry_replaced_others_kept(self):
+        with tempfile.TemporaryDirectory() as t:
+            h = Path(t)
+            cloud = {"type": "http", "url": "https://gitlab.com/api/v4/orbit/mcp"}
+            mine_atl = {"type": "http", "url": "https://my-proxy/atlassian"}
+            custom = {"type": "stdio", "command": "foo"}
+            vs = h / ".config" / "Code" / "User"
+            vs.mkdir(parents=True)
+            (vs / "mcp.json").write_text(json.dumps({"servers": {"gitlab-orbit": cloud, "atlassian": mine_atl, "mine": custom}}))
+            (h / ".claude").mkdir()
+            (h / ".claude.json").write_text(json.dumps({"mcpServers": {"gitlab-orbit": cloud, "mine": custom}}))
+            (h / ".codex").mkdir()
+            env = {"HOME": t, "USERPROFILE": t, "COPILOT_HOME": str(h / ".copilot"), "XDG_CONFIG_HOME": str(h / ".config"),
+                   "PATH": f"{fake_orbit_bin(h)}{os.pathsep}{os.environ['PATH']}"}
+            cmd = [sys.executable, str(ROOT / "install.py"), "--no-hooks", "--set", "orbit.auto_index=no",
+                   "--target", "copilot,claude,cursor,codex"]
+            run(*cmd, env=env)
+            script = str(h / ".copilot" / "sdlc-toolkit" / "scripts" / "orbit_mcp.py")
+            vsj = json.loads((vs / "mcp.json").read_text())["servers"]
+            self.assertEqual(vsj["gitlab-orbit"], {"type": "stdio", "command": sys.executable,
+                                                   "args": [script, "--workspace", "${workspaceFolder}"]})
+            self.assertEqual(vsj["atlassian"], mine_atl)  # user's own settings kept
+            self.assertEqual(vsj["mine"], custom)
+            self.assertIn("gitlab", vsj)
+            cl = json.loads((h / ".claude.json").read_text())["mcpServers"]
+            self.assertEqual(cl["gitlab-orbit"], {"type": "stdio", "command": sys.executable, "args": [script]})
+            self.assertEqual(cl["mine"], custom)
+            cli = json.loads((h / ".copilot" / "mcp-config.json").read_text())["mcpServers"]
+            self.assertEqual(cli["gitlab-orbit"]["type"], "local")
+            self.assertEqual(cli["gitlab-orbit"]["args"], [script])
+            cur = json.loads((h / ".cursor" / "mcp.json").read_text())["mcpServers"]
+            self.assertEqual(cur["gitlab-orbit"]["args"], [script, "--workspace", "${workspaceFolder}"])
+            toml = (h / ".codex" / "config.toml").read_text()
+            self.assertIn('[mcp_servers."gitlab-orbit"]', toml)
+            self.assertIn(f"args = {json.dumps([script])}", toml)
+            self.assertNotIn("api/v4/orbit/mcp", (vs / "mcp.json").read_text() + toml + (h / ".claude.json").read_text())
+            before = {p: p.read_text() for p in (vs / "mcp.json", h / ".claude.json", h / ".codex" / "config.toml")}
+            run(*cmd, env=env)  # idempotent
+            for p, text in before.items():
+                self.assertEqual(json.loads(text) if p.suffix == ".json" else text,
+                                 json.loads(p.read_text()) if p.suffix == ".json" else p.read_text(), p)
+            # opt-in remote mode still writes the hosted endpoint
+            run(*cmd, "--set", "orbit.mcp_mode=remote", env=env)
+            self.assertEqual(json.loads((vs / "mcp.json").read_text())["servers"]["gitlab-orbit"], cloud)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -267,7 +267,8 @@ class Installer:
 
     def merge_mcp(self, path: Path, top_key: str, servers: dict, manifest_key: str):
         data = self._read_json(path) if path.exists() else {}
-        if path.exists() and not data and path.read_text(encoding="utf-8", errors="ignore").strip():
+        raw = path.read_text(encoding="utf-8", errors="ignore").strip() if path.exists() else ""
+        if raw and not data and raw != "{}":
             self.manual.append(f"{path} is not plain JSON (comments?). Add these servers by hand under \"{top_key}\":\n"
                                + json.dumps(servers, indent=2))
             return

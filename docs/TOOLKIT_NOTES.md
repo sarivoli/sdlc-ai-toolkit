@@ -71,8 +71,15 @@ Process
 `[orbit]` in toolkit.ini; `sdlc.py orbit` wraps the CLI with
 `ORBIT_DATA_DIR=<workspace>/.sdlc/orbit` (per-workspace isolation). Installer
 `install_orbit` installs via npm (also finds npm's global bin when not on PATH),
-auto-indexes, and adds the `gitlab-orbit` http MCP. Used by the impact-analysis
-skill step 0 and the full-stack checklist. See USER_MANUAL section 15.
+auto-indexes, and registers `gitlab-orbit` per `[orbit] mcp_mode`:
+`local` (default) = `scripts/orbit_mcp.py`, a stdlib stdio MCP server wrapping the
+CLI (orbit 1.9.x has no MCP server; `orbit query`/`status` call GitLab, so they are
+not exposed and GitLab kinds like `mr:` are refused); `remote` = hosted http
+endpoint; `off`. Editor shapes live in `installer_targets.shape_server`; an old
+hosted `gitlab-orbit` entry is migrated to the local one (`is_orbit_cloud`).
+`orbit setup` is not run: it adds hooks to ~/.claude/settings.json and uses the
+shared ~/.gitlab/orbit graph. Used by the impact-analysis skill step 0 and the
+full-stack checklist. See USER_MANUAL section 15.
 
 ## Work journal
 `[journal]` in toolkit.ini; `sdlc.py log|worklog|report` read/write an append-only

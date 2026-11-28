@@ -504,11 +504,49 @@ includes unpushed commits). No account or running service needed.
 
 **Install:** the installer runs `npm install -g @gitlab/orbit` (needs Node.js),
 disables telemetry (`[orbit] telemetry = no`) and starts indexing the workspace
-folder. If npm is missing it prints the manual step. The hosted Orbit MCP
-(`gitlab-orbit`, `https://gitlab.com/api/v4/orbit/mcp`) is added to Copilot
-and VS Code MCP config for MR/issue context; it needs Orbit enabled on your
-GitLab group and an OAuth sign-in. Set `[orbit] enabled = no` or
-`mcp_endpoint = no` to skip.
+folder. If npm is missing it prints the manual step.
+
+**Local `gitlab-orbit` MCP server (default).** The Orbit CLI (1.9.x) has no MCP
+server of its own, so the toolkit ships one: `scripts/orbit_mcp.py`, a small
+stdio MCP server that wraps the local CLI. The installer registers it as
+`gitlab-orbit` in every editor (Copilot, Claude Code, Cursor, Antigravity,
+Gemini CLI, Codex). It runs on your machine, serves the graph of the folder
+your editor has open, starts indexing that folder the first time it sees it,
+and **never calls GitLab**: no GitLab sign-in is needed for Orbit.
+
+| Tool | Runs |
+|---|---|
+| `orbit_status` | `orbit workspace list`: indexed repos, branch, commit, graph location |
+| `orbit_index` | `orbit workspace index <folder or repo> [--async]` |
+| `orbit_grep` | `orbit grep` in every repo of the folder (or one `repo`) |
+| `orbit_context` | `orbit context` for files, line ranges, names, `Definition:<id>` |
+| `orbit_sql` / `orbit_schema` | read-only DuckDB queries on the local graph |
+
+GitLab lookups (`mr:`, `issue:`, `pipeline:`, GitLab URLs ...) are refused; use
+the `gitlab` MCP server for merge requests, issues and pipelines.
+
+What the installer writes (VS Code `mcp.json`; the others use their own format,
+and Claude Code, Antigravity, Gemini CLI, Codex and the Copilot CLI use the
+folder they were started in instead of `--workspace`):
+
+```json
+"gitlab-orbit": {
+  "type": "stdio",
+  "command": "/usr/bin/python3",
+  "args": ["~/.copilot/sdlc-toolkit/scripts/orbit_mcp.py", "--workspace", "${workspaceFolder}"]
+}
+```
+
+An existing `gitlab-orbit` entry that points at the hosted endpoint
+(`https://gitlab.com/api/v4/orbit/mcp`) is replaced by the local one when you
+re-run the installer; your other servers are left alone.
+
+**Check it:** VS Code > Command Palette > `MCP: List Servers` > `gitlab-orbit`
+> Start Server (or Show Output), then ask Copilot to call `orbit_status`.
+
+`[orbit] mcp_mode` chooses the server: `local` (default), `remote` (the hosted
+GitLab endpoint `mcp_url`, which needs Orbit enabled on your GitLab group and
+an OAuth sign-in) or `off`. `[orbit] enabled = no` turns Orbit off entirely.
 
 **One graph per workspace folder.** Every `orbit` call made through
 `sdlc.py orbit ...` sets `ORBIT_DATA_DIR=<workspace folder>/.sdlc/orbit`, so
@@ -523,12 +561,15 @@ containing the current directory, else the current directory.
 | `sdlc.py orbit list` | indexed repos, branch, commit, status |
 | `sdlc.py orbit grep --repo R -- NAME` | matches with enclosing definitions |
 | `sdlc.py orbit context --repo R -- ARGS` | source, callers, tests |
-| `sdlc.py orbit status` | remote Orbit status (needs GitLab credential) |
+| `sdlc.py orbit status` | same as `list`: state of the local graph |
 
-New workspace folder? Run `sdlc.py orbit index` once there (agents do this
-before impact analysis). `sdlc.py doctor` reports whether the CLI is found.
-`glab orbit setup` does not support VS Code Copilot, so the toolkit wires it
-through the skills/agents instead.
+New workspace folder? Opening it in the editor is enough: the local
+`gitlab-orbit` server indexes it on first start. To index another folder by
+hand, run `sdlc.py orbit index` there, or `sdlc.py orbit index --folder <path>`
+(agents also do this before impact analysis). `sdlc.py doctor` reports whether the CLI is found.
+`orbit setup` does not support VS Code Copilot and writes one shared graph
+(`~/.gitlab/orbit`), so the toolkit wires Orbit through its own MCP server and
+the skills/agents instead.
 
 ---
 
