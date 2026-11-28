@@ -1569,6 +1569,16 @@ def cmd_doctor(cp, args) -> int:
     line(not bad, f"git hooks: {sum(h['status'] == 'installed' for h in hooks)} installed"
          + (f", {len(bad)} missing/outdated -> install-hooks (details: hooks)" if bad else "")
          + ("".join(f", {n} {s}" for s, n in ((s, sum(h['status'] == s for h in hooks)) for s in ("foreign", "skipped", "external")) if n)))
+    ui = _load_json(TOOLKIT_HOME / "logs" / "sdlc-ui-status.json") if (TOOLKIT_HOME / "logs" / "sdlc-ui-status.json").exists() else {}
+    if "sdlc-ui" in servers or ui:
+        if not ui:
+            print("  ·  Agent UI panels: `sdlc-ui` has not been started by an editor yet "
+                  "(VS Code: MCP: List Servers > sdlc-ui > Start Server, then ask an SDLC agent something)")
+        else:
+            print(("  ✅ " if ui.get("panels") else "  ·  ") + f"Agent UI panels: last client {ui.get('client')!r} "
+                  f"({ui.get('updated_at', '?')}), panels {'on' if ui.get('panels') else 'off'}"
+                  + (f", last panel {ui['last_tool']}" if ui.get("last_tool") else ", no panel shown yet")
+                  + ("" if ui.get("panels") else " - text only in this editor; `--set ui.mode=on` forces the tools"))
     for tool in ("ruff", "bandit", "mypy"):
         print(("  ✅ " if shutil.which(tool) else "  ·  ") + f"{tool} {'found' if shutil.which(tool) else 'not found (optional)'}")
     print("\nAll good." if ok else "\nSome items need attention (see ⚠ above and MANUAL_STEPS.md).")

@@ -70,3 +70,12 @@ Post progress comments according to `[jira] progress_updates` via the
 `jira-progress-update` skill. Never skip a checkpoint, even if the
 developer asked you to "just do everything" - you may batch the
 confirmations into one question, but you must ask.
+
+## Panels (`sdlc-ui` tools)
+Check your tool list for `sdlc_ui_*` tools (server `sdlc-ui`). **When they are there, you must use them**: they are how the developer sees results in VS Code Copilot Chat and Cursor. Call the tool, then add at most one line of text (what you wait for, or what comes next); do not repeat the panel as text. Without the tools (other editors, or `[ui] mode = off`) write the same content as text. Panel buttons only send a reply into the chat: keep waiting for the developer's own message.
+
+- Resume: `sdlc_ui_ticket` `{ticket}` right after the resume check.
+- Checkpoint 1: `sdlc_ui_plan` `{ticket}`.
+- Every `confirm_before` question: `sdlc_ui_confirm`.
+- End of every stage: `sdlc_ui_summary` (title = stage, status, facts, items, links, next step).
+- Preflight stopped: `sdlc_ui_checklist`.
