@@ -139,6 +139,13 @@ uninstall; `SDLC_JOURNAL` env overrides). Agents log via the `work-journal` skil
 - **Buttons:** `sdlc.chat` actions send a reply into the chat (`ui/message`),
   `sdlc.open` opens an http(s) link, other names call app-only tools. No
   panel action approves, pushes or writes: consent stays a chat message.
+- **Getting the data to the panel:** the A2UI messages travel in the tool
+  result's embedded resource and again in `_meta["sdlc-ui/a2ui"]`. Some hosts
+  show the panel but never forward the result (seen with the Copilot CLI agent
+  host in VS Code, client `copilot-cli`). The panel then calls the app-only
+  tool `sdlc_ui_render` with the tool input it got, or with nothing, in which
+  case the server returns the panel it built last (`logs/sdlc-ui-last-panel.json`,
+  3 minutes). After 15 s with nothing, it says so instead of waiting.
 - **Icons:** sent as Material SVG paths (`Icon {svgPath}`) because the iframe
   CSP blocks icon fonts.
 - **Install report:** `install.py` writes `install-report.json` next to

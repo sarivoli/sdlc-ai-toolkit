@@ -55,6 +55,8 @@ def log(msg: str):
 
 
 STATUS_FILE = Path(os.environ.get("SDLC_UI_STATUS_FILE") or HERE.parent / "logs" / "sdlc-ui-status.json")
+LAST_PANEL = STATUS_FILE.with_name("sdlc-ui-last-panel.json")
+LAST_PANEL_MAX_AGE = 180  # seconds: a panel that asks with no arguments gets the panel built just before
 
 
 def record(**fields):
@@ -195,6 +197,15 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {"folder": {"type": "string"}}, "additionalProperties": True},
         "_meta": _APP_ONLY,
     },
+    {
+        "name": "sdlc_ui_render",
+        "title": "Draw panel",
+        "description": "Panel callback: build the A2UI messages of a panel tool from its arguments. Used when the "
+                       "editor shows the panel but does not pass it the tool result (e.g. the Copilot CLI agent host).",
+        "inputSchema": {"type": "object", "properties": {
+            "tool": {"type": "string"}, "arguments": {"type": "object"}}, "additionalProperties": False},
+        "_meta": _APP_ONLY,
+    },
 ]
 for _t in TOOLS:
     _t.setdefault("_meta", _UI_META)
@@ -206,6 +217,46 @@ STATUS = {  # status -> (icon, badge)
 }
 ITEM = {"done": ("done", "done"), "todo": ("todo", "to do"), "warn": ("warning", "check"),
         "fail": ("error", "failed"), "skip": ("skipNext", "skipped"), "info": ("info", "")}
+
+
+META_KEY = "sdlc-ui/a2ui"
+
+
+def save_last_panel(messages: list):
+    try:
+        LAST_PANEL.parent.mkdir(parents=True, exist_ok=True)
+        LAST_PANEL.write_text(json.dumps({"at": __import__("time").time(), "messages": messages}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def last_panel() -> dict:
+    """The panel built most recently (any server process), for a panel whose host forwarded nothing."""
+    try:
+        data = json.loads(LAST_PANEL.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    if not data.get("messages") or __import__("time").time() - float(data.get("at", 0)) > LAST_PANEL_MAX_AGE:
+        return {"content": [{"type": "text", "text": "No recent panel to show."}], "isError": True}
+    msgs = data["messages"]
+    return {"content": [{"type": "text", "text": "Last panel."},
+                        {"type": "resource", "resource": {"uri": "a2ui://sdlc/last", "mimeType": A.MIME,
+                                                          "text": json.dumps(msgs, ensure_ascii=False)}}],
+            "_meta": {META_KEY: msgs}}
+
+
+def guess_tool(args: dict) -> str:
+    """Which panel tool these arguments belong to, for hosts that tell the panel neither tool nor result."""
+    keys = set(args)
+    if "action" in keys and "title" in keys:
+        return "sdlc_ui_confirm"
+    if "status" in keys and "title" in keys:
+        return "sdlc_ui_summary"
+    if "source" in keys or "args" in keys:
+        return "sdlc_ui_install_preview"
+    if "folder" in keys:
+        return "sdlc_ui_checklist"
+    return ""
 
 
 class ToolError(Exception):
@@ -643,6 +694,14 @@ class Server:
 
     def call(self, name: str, a: dict) -> dict:
         cp = self.cp
+        if name == "sdlc_ui_render":  # the panel asks for what the host did not forward
+            if not a.get("arguments") and not a.get("tool"):
+                return last_panel()
+            tool = str(a.get("tool") or "") or guess_tool(a.get("arguments") or {})
+            if tool not in {t["name"] for t in TOOLS} or tool == "sdlc_ui_render":
+                return {"content": [{"type": "text", "text": f"Unknown panel tool: {tool!r}"}], "isError": True}
+            # re-rendering never runs side effects: install preview would re-run a dry run, so it is allowed
+            return self.call(tool, a.get("arguments") if isinstance(a.get("arguments"), dict) else {})
         screens = {
             "sdlc_ui_confirm": lambda: screen_confirm(a),
             "sdlc_ui_summary": lambda: screen_summary(a),
@@ -657,19 +716,24 @@ class Server:
         try:
             messages, text = screens[name]()
         except ToolError as exc:
+            record(last_tool=name, last_tool_ok=False, last_error=str(exc)[:300])
             return {"content": [{"type": "text", "text": str(exc)}], "isError": True}
         except Exception as exc:  # never kill the server on one bad call
             log(f"{name}: {type(exc).__name__}: {exc}")
+            record(last_tool=name, last_tool_ok=False, last_error=f"{type(exc).__name__}: {exc}"[:300])
             return {"content": [{"type": "text", "text": f"{type(exc).__name__}: {exc}"}], "isError": True}
-        record(last_tool=name, last_tool_ok=True)
+        record(last_tool=name, last_tool_ok=True, last_error=None)
         problems = A.check(messages)
         if problems:
             return {"content": [{"type": "text", "text": "UI payload invalid: " + "; ".join(problems)}], "isError": True}
+        save_last_panel(messages)
+        # The panel reads the messages from the embedded resource, or from `_meta` when a host drops
+        # resources; if neither arrives it asks again with sdlc_ui_render (see ui/src/main.ts).
         return {"content": [
             {"type": "text", "text": text},
             {"type": "resource", "resource": {"uri": f"a2ui://sdlc/{messages[0]['createSurface']['surfaceId']}",
                                               "mimeType": A.MIME, "text": json.dumps(messages, ensure_ascii=False)}},
-        ]}
+        ], "_meta": {META_KEY: messages}}
 
     def handle(self, msg: dict) -> dict | None:
         method, mid, params = msg.get("method"), msg.get("id"), msg.get("params") or {}

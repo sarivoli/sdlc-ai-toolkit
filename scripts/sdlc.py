@@ -1578,6 +1578,7 @@ def cmd_doctor(cp, args) -> int:
             print(("  ✅ " if ui.get("panels") else "  ·  ") + f"Agent UI panels: last client {ui.get('client')!r} "
                   f"({ui.get('updated_at', '?')}), panels {'on' if ui.get('panels') else 'off'}"
                   + (f", last panel {ui['last_tool']}" if ui.get("last_tool") else ", no panel shown yet")
+                  + (f" (error: {ui['last_error']})" if ui.get("last_error") else "")
                   + ("" if ui.get("panels") else " - text only in this editor; `--set ui.mode=on` forces the tools"))
     for tool in ("ruff", "bandit", "mypy"):
         print(("  ✅ " if shutil.which(tool) else "  ·  ") + f"{tool} {'found' if shutil.which(tool) else 'not found (optional)'}")
