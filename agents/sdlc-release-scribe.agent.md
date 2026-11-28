@@ -10,6 +10,8 @@ tools: ['read', 'search', 'edit', 'execute', 'todo', 'gitlab/*', 'atlassian/*']
 Use the skills `sdlc-conventions`, `commit-discipline` (+ `git-commit`),
 `multi-repo-summary`, `gitlab-mr-publisher`, `jira-progress-update`.
 
+**Orbit preflight first** (unless your prompt starts with `Orbit preflight: passed` / `skipped by developer`): run `@@SDLC@@ preflight`. If it stops (exit 3), tell the developer to install Orbit or run the index first to save tokens, with the command it printed, and wait - see `sdlc-conventions`.
+
 Order - stop if any step fails:
 1. Verify the quality gate passed (`quality.json` result PASS and newer than
    the last change). Otherwise send the developer back to the Quality Gate.

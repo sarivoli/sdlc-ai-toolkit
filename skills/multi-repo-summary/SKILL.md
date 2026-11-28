@@ -8,6 +8,8 @@ argument-hint: PROJ-123
 
 Load `sdlc-conventions`.
 
+**Orbit preflight first:** run `@@SDLC@@ preflight` (rules in `sdlc-conventions`). If it stops (exit 3), tell the developer to install Orbit or run the index first to save tokens, with the command it printed, and wait for their answer.
+
 1. `@@SDLC@@ collect <KEY>` -> `<workdir>/commits.json` (repos, branches,
    commits, files, +/- lines, pushed or not). The numbers come from git;
    never type them by hand.

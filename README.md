@@ -133,6 +133,23 @@ GitLab, Orbit), installs the Orbit CLI through npm when Node.js is available,
 and prints an **ACTION REQUIRED** list (sign in to Jira and GitLab once, reload
 the editor). That list is also saved to `~/.copilot/sdlc-toolkit/MANUAL_STEPS.md`.
 
+It ends with a **post-install checklist** of three items, each checked for you
+and shown as done or to do with the exact command:
+
+1. **Orbit code index (mandatory, saves tokens)** - Orbit installed and your
+   workspace folder indexed. Ticket workflows stop and ask you to install
+   Orbit or run the index first when it is missing.
+2. **Git authentication** - a non-interactive `git ls-remote` to your remotes.
+3. **Jira authentication** - the Atlassian MCP sign-in (or a `JIRA_API_TOKEN`).
+
+Re-check any time with `python3 ~/.copilot/sdlc-toolkit/scripts/sdlc.py checklist`.
+
+It also lists **every hook on the system** that the toolkit installs or that
+affects it (git `commit-msg` / `pre-push` per repo, a global `core.hooksPath`,
+Orbit editor hooks) with trigger, path and status (installed / updated /
+unchanged / missing), after a fresh install and after every update. Again any
+time: `python3 ~/.copilot/sdlc-toolkit/scripts/sdlc.py hooks`.
+
 Other installer options:
 
 ```bash
@@ -156,6 +173,9 @@ Helper CLI examples (installed at `~/.copilot/sdlc-toolkit/scripts/sdlc.py`):
 
 ```bash
 python3 sdlc.py doctor                                   # check the installation
+python3 sdlc.py checklist                                # Orbit index, git auth, Jira auth
+python3 sdlc.py preflight                                # Orbit gate before ticket work
+python3 sdlc.py hooks                                    # hooks the toolkit installed, with status
 python3 sdlc.py repos                                    # repos in the workspace
 python3 sdlc.py branch-name PROJ-123 --type bugfix --user kumar
 python3 sdlc.py check-commit --message "PROJ-123: fix lookup"

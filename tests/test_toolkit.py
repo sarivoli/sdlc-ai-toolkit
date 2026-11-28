@@ -2,18 +2,22 @@
 
 Run:  python -m unittest discover -s tests -v
 """
+import contextlib
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SDLC = ROOT / "scripts" / "sdlc.py"
 sys.path.insert(0, str(ROOT / "scripts"))
 os.environ["SDLC_TOOLKIT_HOME"] = str(ROOT)  # use config/ and templates/ from the repo
+os.environ["SDLC_CHECKS_OFFLINE"] = "1"  # installer runs: no network checks in the post-install checklist
 import sdlc  # noqa: E402
 
 
@@ -267,7 +271,14 @@ class InstallerTests(unittest.TestCase):
             mcp = json.loads((home / "mcp-config.json").read_text())["mcpServers"]
             self.assertEqual(set(mcp), {"context7", "atlassian", "gitlab", "gitlab-orbit"})
             self.assertTrue((home / "sdlc-toolkit" / "MANUAL_STEPS.md").exists())
-            self.assertNotIn("still placeholders", (home / "sdlc-toolkit" / "MANUAL_STEPS.md").read_text(encoding="utf-8"))
+            steps_md = (home / "sdlc-toolkit" / "MANUAL_STEPS.md").read_text(encoding="utf-8")
+            self.assertNotIn("still placeholders", steps_md)
+            # post-install checklist: printed and saved, Orbit first and mandatory
+            self.assertIn("POST-INSTALL CHECKLIST", p.stdout)
+            self.assertIn("## Post-install checklist", steps_md)
+            for title in ("Orbit code index (MANDATORY", "Git authentication", "Jira authentication"):
+                self.assertIn(title, steps_md)
+            self.assertLess(steps_md.index("Orbit code index"), steps_md.index("Git authentication"))
             # helper works from the installed location
             run(sys.executable, str(home / "sdlc-toolkit" / "scripts" / "sdlc.py"), "template", "mr-description.md",
                 env={"SDLC_TOOLKIT_HOME": str(home / "sdlc-toolkit")})
@@ -511,3 +522,260 @@ class OrbitMigrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+FAKE_ORBIT_ROWS = """#!/usr/bin/env python3
+import os, sys
+if sys.argv[1:3] == ["workspace", "list"]:
+    print(os.environ.get("FAKE_ROWS", "[]"))
+"""
+
+
+def git_init(path: Path) -> Path:
+    run("git", "init", "-q", str(path))
+    return path
+
+
+class OrbitPreflightTests(unittest.TestCase):
+    def setUp(self):
+        self.cp = sdlc.load_config()
+
+    def test_not_installed_stops_with_install_command(self):
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(sdlc, "orbit_command", return_value=None):
+            st = sdlc.orbit_state(self.cp, Path(t))
+            self.assertFalse(st["ok"])
+            self.assertEqual(st["state"], "not-installed")
+            self.assertIn("npm install -g @gitlab/orbit", "\n".join(st["steps"]))
+            self.assertIn("orbit index", "\n".join(st["steps"]))
+            args = mock.Mock(folder=t, json=False)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.assertEqual(sdlc.cmd_preflight(self.cp, args), 3)
+            self.assertIn("PREFLIGHT STOP", buf.getvalue())
+
+    def test_disabled_passes(self):
+        cp = sdlc.load_config()
+        cp.set("orbit", "enabled", "no")
+        with tempfile.TemporaryDirectory() as t:
+            self.assertTrue(sdlc.orbit_state(cp, Path(t))["ok"])
+
+    def test_home_dir_is_not_a_workspace(self):
+        with mock.patch.object(sdlc, "orbit_command", return_value=["orbit"]):
+            st = sdlc.orbit_state(self.cp, Path.home().resolve())
+        self.assertEqual(st["state"], "no-folder")
+        self.assertFalse(st["ok"])
+
+    @unittest.skipIf(os.name == "nt", "fake orbit CLI is a POSIX script")
+    def test_index_states_via_cli(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            b = tmp / "bin"
+            b.mkdir()
+            (b / "orbit").write_text(FAKE_ORBIT_ROWS)
+            (b / "orbit").chmod(0o755)
+            ws = tmp / "ws"
+            r1 = git_init(ws / "r1")
+
+            def pre(rows=None):
+                env = {"PATH": f"{b}{os.pathsep}{os.environ['PATH']}", "SDLC_TOOLKIT_HOME": str(ROOT)}
+                if rows is not None:
+                    env["FAKE_ROWS"] = json.dumps(rows)
+                return run(sys.executable, str(SDLC), "preflight", "--folder", str(ws), env=env, check=False)
+
+            p = pre()
+            self.assertEqual(p.returncode, 3, p.stdout)
+            self.assertIn("PREFLIGHT STOP", p.stdout)
+            self.assertIn("not indexed", p.stdout)
+            self.assertIn(f'orbit index --folder "{ws.resolve().as_posix()}"', p.stdout)
+            self.assertFalse((ws / ".sdlc").exists())  # the check never creates the graph folder
+            (ws / ".sdlc" / "orbit").mkdir(parents=True)
+            (ws / ".sdlc" / "orbit" / "graph.db").write_text("x")
+            ok = [{"repo_path": str(r1), "status": "indexed"}]
+            p = pre(ok)
+            self.assertEqual(p.returncode, 0, p.stdout)
+            self.assertIn("preflight OK", p.stdout)
+            p = pre([{"repo_path": str(r1), "status": "indexing"}])
+            self.assertEqual(p.returncode, 3)
+            self.assertIn("still indexing", p.stdout)
+            git_init(ws / "r2")
+            p = pre(ok)
+            self.assertEqual(p.returncode, 3)
+            self.assertIn("r2", p.stdout)
+
+
+class AuthCheckTests(unittest.TestCase):
+    def setUp(self):
+        self.cp = sdlc.load_config()
+
+    def test_redact(self):
+        self.assertEqual(sdlc.redact("fatal: https://bob:glpat-123@gitlab.com/x.git"), "fatal: https://***@gitlab.com/x.git")
+
+    def test_remote_host(self):
+        self.assertEqual(sdlc._remote_host("git@gitlab.com:acme/x.git"), ("ssh", "gitlab.com"))
+        self.assertEqual(sdlc._remote_host("https://u:t@GitLab.example.com/acme/x.git"), ("https", "gitlab.example.com"))
+        self.assertEqual(sdlc._remote_host("/srv/git/x.git"), ("file", ""))
+        self.assertEqual(sdlc._remote_host("C:\\repos\\x.git"), ("file", ""))
+
+    def test_git_ok_and_failure_without_secrets(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            run("git", "init", "-q", "--bare", str(tmp / "origin.git"))
+            ws = tmp / "ws"
+            good = git_init(ws / "good")
+            run("git", "-C", str(good), "remote", "add", "origin", str(tmp / "origin.git"))
+            st = sdlc.git_auth_state(self.cp, ws, offline=False, timeout=10)
+            self.assertTrue(st["ok"], st)
+            bad = git_init(ws / "bad")
+            run("git", "-C", str(bad), "remote", "add", "origin", "https://bob:s3cr3t-token@127.0.0.1:9/acme/x.git")
+            st = sdlc.git_auth_state(self.cp, ws, offline=False, timeout=10)
+            self.assertFalse(st["ok"])
+            self.assertEqual(st["state"], "pending")
+            self.assertNotIn("s3cr3t-token", json.dumps(st))
+            self.assertIn("credential.helper", "\n".join(st["steps"]))
+            self.assertEqual(sdlc.git_auth_state(self.cp, ws, offline=True)["state"], "unverified")
+
+    def test_jira(self):
+        cp = sdlc.load_config()
+        self.assertEqual(sdlc.jira_auth_state(cp)["state"], "pending")  # placeholder site
+        cp.set("jira", "site", "https://acme.atlassian.net")
+        clean = {k: v for k, v in os.environ.items() if not k.startswith(("JIRA_", "ATLASSIAN_"))}
+        with mock.patch.dict(os.environ, clean, clear=True):
+            st = sdlc.jira_auth_state(cp)
+            self.assertEqual(st["state"], "unverified")
+            self.assertIn("atlassian", "\n".join(st["steps"]))
+        seen = {}
+
+        class Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b'{"displayName": "Dev One"}'
+
+        def opener(req, timeout):
+            seen["url"], seen["auth"], seen["timeout"] = req.full_url, req.get_header("Authorization"), timeout
+            return Resp()
+
+        env = dict(clean, JIRA_API_TOKEN="tok-SECRET", JIRA_EMAIL="dev@example.com")
+        with mock.patch.dict(os.environ, env, clear=True):
+            st = sdlc.jira_auth_state(cp, opener=opener)
+            self.assertEqual(st["state"], "done")
+            self.assertIn("Dev One", st["summary"])
+            self.assertEqual(seen["url"], "https://acme.atlassian.net/rest/api/3/myself")
+            self.assertTrue(seen["auth"].startswith("Basic "))
+            self.assertLessEqual(seen["timeout"], 10)
+
+            def refuse(req, timeout):
+                import urllib.error
+                raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+
+            st = sdlc.jira_auth_state(cp, opener=refuse)
+            self.assertEqual(st["state"], "pending")
+            self.assertIn("401", st["summary"])
+            self.assertNotIn("tok-SECRET", json.dumps(st))
+
+    def test_checklist_has_three_items_orbit_first(self):
+        with tempfile.TemporaryDirectory() as t, mock.patch.object(sdlc, "orbit_command", return_value=None):
+            items = sdlc.checklist(self.cp, Path(t), offline=True)
+        self.assertEqual([i["name"] for i in items], ["orbit", "git", "jira"])
+        self.assertIn("MANDATORY", items[0]["title"])
+        text = sdlc.render_checklist(items)
+        self.assertIn("[ ] **Orbit code index", text)
+
+
+class TicketWorkflowGateTests(unittest.TestCase):
+    """Every ticket-driven skill and agent runs the Orbit preflight first."""
+    GATED = ["skills/jira-ticket-digest/SKILL.md", "skills/impact-analysis/SKILL.md", "skills/implementation-plan/SKILL.md",
+             "skills/quality-gate/SKILL.md", "skills/commit-discipline/SKILL.md", "skills/multi-repo-summary/SKILL.md",
+             "skills/gitlab-mr-publisher/SKILL.md", "skills/jira-progress-update/SKILL.md",
+             "agents/sdlc-orchestrator.agent.md", "agents/sdlc-ticket-analyst.agent.md",
+             "agents/sdlc-impact-analyst.agent.md", "agents/sdlc-implementer.agent.md",
+             "agents/sdlc-quality-gate.agent.md", "agents/sdlc-release-scribe.agent.md"]
+
+    def test_gated(self):
+        for f in self.GATED:
+            text = (ROOT / f).read_text(encoding="utf-8")
+            self.assertIn("@@SDLC@@ preflight", text, f)
+            self.assertIn("save tokens", text, f)
+        conv = (ROOT / "skills/sdlc-conventions/SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("Exit 3 (STOP)", conv)
+        self.assertIn("Never choose this yourself", conv)
+
+
+class HookInventoryTests(unittest.TestCase):
+    def setUp(self):
+        self.cp = sdlc.load_config()
+
+    def sdlc_cli(self, ws: Path, *args):
+        return run(sys.executable, str(SDLC), *args, env={"SDLC_TOOLKIT_HOME": str(ROOT), "SDLC_WORKSPACE_ROOT": str(ws)},
+                   check=False)
+
+    def test_statuses(self):
+        with tempfile.TemporaryDirectory() as t:
+            ws = Path(t) / "ws"
+            a, b, c = git_init(ws / "a"), git_init(ws / "b"), git_init(ws / "c")
+            (b / ".git" / "hooks").mkdir(parents=True, exist_ok=True)
+            (b / ".git" / "hooks" / "commit-msg").write_text("#!/bin/sh\necho mine\n")
+            run("git", "-C", str(c), "config", "core.hooksPath", ".husky")
+            p = self.sdlc_cli(ws, "install-hooks")
+            self.assertIn(f"[sdlc] hook installed commit-msg {sdlc._posix(a / '.git' / 'hooks' / 'commit-msg')}", p.stdout)
+            self.assertIn("[sdlc] hook foreign commit-msg", p.stdout)
+            self.assertIn("[sdlc] hook unchanged pre-push", self.sdlc_cli(ws, "install-hooks").stdout)
+            rows = {(Path(r["repo"]).name, r["name"]): r for r in sdlc.git_hook_inventory(self.cp, [a, b, c])}
+            self.assertEqual(rows[("a", "commit-msg")]["status"], "installed")
+            self.assertEqual(rows[("a", "commit-msg")]["event"], sdlc.HOOK_EVENTS["commit-msg"])
+            self.assertEqual(rows[("b", "commit-msg")]["status"], "foreign")
+            self.assertEqual(rows[("b", "pre-push")]["status"], "installed")
+            self.assertEqual(rows[("c", "pre-push")]["status"], "skipped")
+            # a toolkit hook pointing at a removed helper is outdated, and install-hooks updates it
+            (a / ".git" / "hooks" / "pre-push").write_text(f'#!/bin/sh\n# {sdlc.HOOK_MARKER}\n"python3" "/gone/sdlc.py" x\n')
+            self.assertEqual({r["name"]: r["status"] for r in sdlc.git_hook_inventory(self.cp, [a])}["pre-push"], "outdated")
+            self.assertIn("[sdlc] hook updated pre-push", self.sdlc_cli(ws, "install-hooks").stdout)
+            (a / ".git" / "hooks" / "commit-msg").unlink()
+            p = self.sdlc_cli(ws, "hooks", "--json")
+            self.assertEqual(p.returncode, 1)  # something is missing
+            got = {(Path(r["repo"]).name, r["name"]): r["status"] for r in json.loads(p.stdout)}
+            self.assertEqual(got[("a", "commit-msg")], "missing")
+            text = self.sdlc_cli(ws, "hooks", "--markdown").stdout
+            self.assertIn("| Hook | Type | Trigger | Status | Path |", text)
+            self.assertIn("no global git hooks, editor/agent hooks, shell hooks or scheduled jobs", text)
+
+    def test_editor_hooks_listed_without_secrets(self):
+        with tempfile.TemporaryDirectory() as t:
+            home = Path(t)
+            (home / ".claude").mkdir()
+            (home / ".claude" / "settings.json").write_text(json.dumps({"hooks": {
+                "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "orbit hook session-start"}]}],
+                "PreToolUse": [{"hooks": [{"type": "command", "command": "my-linter --fix"}]}]}}))
+            rows = sdlc.editor_hook_inventory(home)
+            self.assertEqual(len(rows), 1)  # unrelated hooks are not listed
+            self.assertEqual(rows[0]["event"], "SessionStart")
+            self.assertEqual(rows[0]["status"], "external")
+            self.assertEqual(rows[0]["type"], "editor hook (Claude Code)")
+
+
+class InstallerHookReportTests(unittest.TestCase):
+    def test_fresh_install_then_update(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            ws = tmp / "work"
+            repo = git_init(ws / "app")
+            env = {"COPILOT_HOME": str(tmp / ".copilot"), "XDG_CONFIG_HOME": str(tmp / ".config")}
+            cmd = [sys.executable, str(ROOT / "install.py"), "--target", "copilot", "--workspace", str(ws),
+                   "--set", "orbit.enabled=no"]
+            p = run(*cmd, env=env)
+            self.assertIn("HOOKS ON THIS SYSTEM", p.stdout)
+            self.assertIn("[installed] commit-msg (git hook)", p.stdout)
+            md = (tmp / ".copilot" / "sdlc-toolkit" / "MANUAL_STEPS.md").read_text(encoding="utf-8")
+            self.assertIn("## Hooks on this system", md)
+            self.assertIn(sdlc._posix(repo / ".git" / "hooks" / "pre-push"), md)
+            self.assertLess(md.index("## Post-install checklist"), md.index("## Hooks on this system"))
+            p = run(*cmd, env=env)  # update / re-install
+            self.assertIn("[unchanged] pre-push (git hook)", p.stdout)
+            p = run(*cmd, "--no-hooks", env=env)
+            self.assertIn("[installed] commit-msg (git hook)", p.stdout)  # still on disk, reported as such
+            m = json.loads((tmp / ".copilot" / "sdlc-toolkit" / "manifest.json").read_text())
+            self.assertEqual(m["hooks"], [str(repo)])  # --no-hooks keeps track of hooks installed earlier

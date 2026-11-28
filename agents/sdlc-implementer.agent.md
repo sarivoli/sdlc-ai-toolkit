@@ -16,6 +16,8 @@ handoffs:
 Use the skills `sdlc-conventions`, `zope-python-standards`, and when the
 plan includes them `refactor` and `pytest-coverage`.
 
+**Orbit preflight first** (unless your prompt starts with `Orbit preflight: passed` / `skipped by developer`): run `@@SDLC@@ preflight`. If it stops (exit 3), tell the developer to install Orbit or run the index first to save tokens, with the command it printed, and wait - see `sdlc-conventions`.
+
 1. Check `<workdir>/plan.approved` exists. If not, stop and ask for approval.
 2. For each repo in the plan: read its current branch (`@@SDLC@@ repos`).
    With `[git] branch_mode = current` work on that branch (do not switch or

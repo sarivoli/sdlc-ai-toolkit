@@ -170,8 +170,61 @@ upgrade). Use `--dry-run` to preview.
 
 ## 4. Manual steps after installing
 
-The installer prints an **ACTION REQUIRED** list and saves it to
-`~/.copilot/sdlc-toolkit/MANUAL_STEPS.md`. The usual items:
+### Post-install checklist (do these three first)
+
+At the end the installer checks three things and prints them as a
+**POST-INSTALL CHECKLIST** (also at the top of
+`~/.copilot/sdlc-toolkit/MANUAL_STEPS.md`). Each item is `[x]` done,
+`[ ]` to do, `[~]` in progress or `[?]` not verifiable automatically, and
+every open item shows the exact command or steps.
+
+| # | Item | How it is checked |
+|---|------|-------------------|
+| 1 | **Orbit code index - MANDATORY** (saves tokens) | Orbit CLI on PATH, and every repo of the workspace folder in `<folder>/.sdlc/orbit` (`orbit workspace list`). Fix: `npm install -g @gitlab/orbit`, then `sdlc orbit index --folder <folder>` |
+| 2 | **Git authentication** | `git ls-remote` against one remote per host of your workspace repos, with prompts disabled (`GIT_TERMINAL_PROMPT=0`, SSH `BatchMode`, Credential Manager non-interactive), 15 s timeout. No repos yet: `ssh -T git@<gitlab host>` |
+| 3 | **Jira authentication** | The agents use the `atlassian` MCP server, whose OAuth sign-in lives inside your editor and cannot be read from outside - so this shows `[?]` until you confirm it by asking the agent to call `atlassianUserInfo`. If `JIRA_API_TOKEN` + `JIRA_EMAIL` are set, they are verified with `GET /rest/api/3/myself` (8 s timeout) |
+
+The checks never prompt, never print tokens (credentials in remote URLs are
+masked) and never block the install. Re-check any time:
+
+```bash
+python3 ~/.copilot/sdlc-toolkit/scripts/sdlc.py checklist            # --offline skips git/Jira network checks
+```
+
+`python install.py --no-auth-checks` skips the network checks during install.
+
+**Why the Orbit index is mandatory:** every ticket workflow (ticket digest,
+impact analysis, plan, implement, quality gate, commits, summary, MRs, Jira
+updates) starts with `sdlc preflight`. If Orbit is not installed or the
+workspace folder is not indexed, the agent **stops** and tells you to install
+Orbit or run the index first, with the exact command. It continues without
+Orbit only if you explicitly say *proceed without Orbit*.
+
+### Hooks on this system
+
+After every install **and** every update the installer also lists every hook
+the toolkit installs or that affects it (printed as **HOOKS ON THIS SYSTEM**
+and saved in `MANUAL_STEPS.md` under the checklist): name, type, trigger, full
+path and status.
+
+| Status | Meaning |
+|---|---|
+| `installed` | written by this run (or present and working when listed later) |
+| `updated` / `unchanged` | a toolkit hook that was already there, rewritten / identical |
+| `missing` | expected but not there (repo cloned later, or `--no-hooks`) - run `sdlc install-hooks` |
+| `outdated` | toolkit hook pointing at a helper that no longer exists - run `sdlc install-hooks` |
+| `foreign` | your own hook with the same name, kept; chain the toolkit check into it |
+| `skipped` | the repo uses `core.hooksPath` (husky / pre-commit); add the check there by hand |
+| `external` | not written by the toolkit but relevant: a global `core.hooksPath`, or an editor hook that runs Orbit (e.g. from `orbit setup`) |
+
+The toolkit installs only the git `commit-msg` and `pre-push` hooks in the
+workspace repos. It installs no global git hooks, editor/agent hooks, shell
+hooks or scheduled jobs. List them any time with `sdlc hooks`
+(`--json`, `--markdown`); `sdlc doctor` shows a one-line summary.
+
+### Other manual steps
+
+The installer also prints an **ACTION REQUIRED** list (same file). The usual items:
 
 1. **Reload VS Code** — *Command Palette → Developer: Reload Window*.
 2. **Sign in to Jira and GitLab (once).** *Command Palette → MCP: List Servers →
@@ -263,6 +316,9 @@ You don't have to run the full flow.
   sdlc template mr-description.md  # show the template in effect
   sdlc config                      # effective settings
   sdlc doctor                      # installation check
+  sdlc checklist                   # Orbit index / git auth / Jira auth status
+  sdlc preflight                   # Orbit gate run before ticket work (exit 3 = stop)
+  sdlc hooks                       # every hook the toolkit installed, with status
   ```
 
 ---
@@ -575,7 +631,9 @@ containing the current directory, else the current directory.
 New workspace folder? Opening it in the editor is enough: the local
 `gitlab-orbit` server indexes it on first start. To index another folder by
 hand, run `sdlc.py orbit index` there, or `sdlc.py orbit index --folder <path>`
-(agents also do this before impact analysis). `sdlc.py doctor` reports whether the CLI is found.
+(agents also do this before impact analysis). `sdlc.py doctor` reports whether the CLI is found
+and whether the folder is indexed; `sdlc.py preflight` is the gate the agents run before any
+ticket work (exit 3 = Orbit missing or folder not indexed: they stop and ask you to index first).
 `orbit setup` does not support VS Code Copilot and writes one shared graph
 (`~/.gitlab/orbit`), so the toolkit wires Orbit through its own MCP server and
 the skills/agents instead.

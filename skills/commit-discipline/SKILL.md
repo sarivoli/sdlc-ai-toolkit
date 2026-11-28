@@ -9,6 +9,8 @@ argument-hint: PROJ-123
 Load `sdlc-conventions`. Use the `git-commit` skill for staging and message
 mechanics, with these team rules on top (team rules win on conflict):
 
+**Orbit preflight first:** run `@@SDLC@@ preflight` (rules in `sdlc-conventions`). If it stops (exit 3), tell the developer to install Orbit or run the index first to save tokens, with the command it printed, and wait for their answer.
+
 1. **Gate first.** Do not commit unless `<workdir>/quality.json` exists with
    `"result": "PASS"` and is newer than the last file change. Otherwise run
    the `quality-gate` skill.

@@ -16,6 +16,8 @@ All deterministic work goes through one command. Call it exactly like this
 
 | Need | Command |
 |------|---------|
+| **Orbit preflight (before any ticket work)** | `@@SDLC@@ preflight` |
+| Setup status: Orbit index, git auth, Jira auth | `@@SDLC@@ checklist` |
 | Team settings (Jira site, GitLab group, commit rules, quality commands) | `@@SDLC@@ config` |
 | A template, with per-repo overrides applied | `@@SDLC@@ template <file> [--repo <path>]` |
 | Repos in the workspace + branch / dirty state | `@@SDLC@@ repos` |
@@ -30,6 +32,38 @@ All deterministic work goes through one command. Call it exactly like this
 
 Read `config` once at the start of a session and follow it. Never hard-code
 values that the config defines.
+
+## Orbit preflight (mandatory before ticket work)
+Every workflow that works on a Jira ticket (digest / analysis, impact, plan,
+implement, quality gate, commits, summary, MRs, Jira updates) starts with,
+in the workspace folder:
+
+```
+@@SDLC@@ preflight
+```
+
+It checks that the GitLab Orbit CLI is installed and that every repo of this
+workspace folder is in its code index. The index is what keeps token use
+low: without it the agent reads far more files to understand the code.
+
+- **Exit 0** - go ahead, and use Orbit (`gitlab-orbit` MCP tools or
+  `@@SDLC@@ orbit grep|context`) for code search.
+- **Exit 3 (STOP)** - do not start the ticket work. Show the developer the
+  message it printed (it names the exact install or index command), say that
+  it is needed to save tokens, and ask what to do:
+  1. *Index now* - run the printed `orbit index` command yourself (it only
+     writes to `<folder>/.sdlc/orbit`), then run `preflight` again.
+  2. *Install Orbit* - `npm install -g @gitlab/orbit` changes the machine:
+     show the command and wait for "yes" before running it, then index.
+  3. *Proceed without Orbit* - only when the developer says so explicitly.
+     Write "Orbit: skipped by developer (no index)" at the top of the stage
+     output and continue with plain search. Never choose this yourself.
+  While it reports *still indexing*, offer to wait (re-run `preflight`) or
+  to proceed without it (same rule as 3).
+- Run it once per ticket per conversation. When you hand a stage to a
+  subagent, start its prompt with `Orbit preflight: passed` or
+  `Orbit preflight: skipped by developer`; a subagent that gets either line
+  does not run it again.
 
 ## Branch convention (team)
 `<type>/<username>/<KEY>`; types `feature`, `bugfix`, `spike`, `refactor`,
