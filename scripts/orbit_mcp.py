@@ -8,10 +8,18 @@ Everything runs on this machine: the graph lives in <workspace>/.sdlc/orbit
 
     python orbit_mcp.py [--workspace <folder>]
 
-Workspace: --workspace, else the current directory. When the folder is inside a
-configured workspace root (`[workspace] root/roots` in toolkit.ini) the root's
-graph is used, exactly like `sdlc.py orbit`. An unexpanded editor variable such
-as `${workspaceFolder}` falls back to the current directory.
+The editor configs carry no workspace path or variable (they are user level and
+shared by all workspaces; Copilot rejects unresolved `${...}` variables). The
+workspace folder is worked out at run time, first match wins:
+  1. --workspace <folder>
+  2. the MCP client's roots: when the client declares the `roots` capability the
+     server asks `roots/list` after `notifications/initialized` and uses the
+     first file:// root (re-read on `notifications/roots/list_changed`)
+  3. $WORKSPACE_FOLDER (when it is a real directory)
+  4. the current directory (spelled as $PWD when that is the same folder)
+When the folder is inside a configured workspace root (`[workspace] root/roots`
+in toolkit.ini) the root's graph is used, exactly like `sdlc.py orbit`. The home
+directory and the filesystem root are never indexed automatically.
 
 Transport: JSON-RPC 2.0, one message per line on stdin/stdout (MCP stdio).
 Standard library only; Python 3.8+.
@@ -25,6 +33,8 @@ import re
 import subprocess
 import sys
 import threading
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -34,6 +44,7 @@ import sdlc as S  # noqa: E402  (helper CLI next to this file)
 SERVER_NAME = "gitlab-orbit"
 PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
 TIMEOUT = int(os.environ.get("SDLC_ORBIT_MCP_TIMEOUT", "300"))
+ROOTS_WAIT = float(os.environ.get("SDLC_ORBIT_MCP_ROOTS_WAIT", "5"))
 MAX_OUTPUT = 120_000
 
 # grep/context kinds that make the Orbit CLI call the GitLab API. This server is local only.
@@ -62,9 +73,44 @@ def load_cp():
         return configparser.ConfigParser(interpolation=None)
 
 
+def guarded(p: Path) -> bool:
+    """Home directory or filesystem root: far too big to index by accident."""
+    try:
+        home = Path.home().resolve()
+    except (RuntimeError, KeyError):
+        home = None
+    return p == home or p == Path(p.anchor)
+
+
+def uri_to_path(uri: str) -> Path | None:
+    u = urllib.parse.urlparse(uri or "")
+    if u.scheme != "file":
+        return None
+    path = urllib.request.url2pathname(u.path)  # also percent-decodes
+    if u.netloc and u.netloc != "localhost":
+        path = f"//{u.netloc}{path}"
+    return Path(path)
+
+
+def fallback_start() -> str:
+    """$WORKSPACE_FOLDER, else the current directory. $PWD is only used to keep the
+    user's spelling of the cwd (symlinks): a parent's stale $PWD is ignored."""
+    v = os.environ.get("WORKSPACE_FOLDER")
+    if v and "${" not in v and Path(v).is_dir():
+        return v
+    cwd = os.getcwd()
+    pwd = os.environ.get("PWD")
+    try:
+        if pwd and Path(pwd).is_dir() and os.path.samefile(pwd, cwd):
+            return pwd
+    except OSError:
+        pass
+    return cwd
+
+
 def resolve_folder(cp, start: str | None) -> Path:
     if not start or "${" in start:
-        start = os.getcwd()
+        start = fallback_start()
     p = Path(start).expanduser().resolve()
     roots = [Path(r.strip()).expanduser().resolve() for r in S.cfg(cp, "workspace", "roots", "").split(",") if r.strip()]
     root = S.cfg(cp, "workspace", "root", "")
@@ -83,7 +129,12 @@ class Orbit:
         self.base = S.orbit_command()
         if self.base and len(self.base) > 1:  # `glab orbit` would use the GitLab sign-in; stay with the plain CLI only
             self.base = None
-        self.env = S.orbit_env(cp, folder)
+        self.guarded = guarded(folder)
+        data = folder / S.cfg(cp, "workspace", "work_dir", ".sdlc") / "orbit"
+        if not self.guarded:
+            data.mkdir(parents=True, exist_ok=True)
+        self.env = dict(os.environ, ORBIT_DATA_DIR=str(data))
+        self.env["ORBIT_TELEMETRY_ENABLED"] = "true" if S.cfg_bool(cp, "orbit", "telemetry", False) else "false"
         for k in _SCRUB:
             self.env.pop(k, None)
         self.env["ORBIT_NO_GITLAB"] = "1"
@@ -107,6 +158,8 @@ class Orbit:
     def repos(self) -> list[Path]:
         if S.is_repo(self.folder):
             return [self.folder]
+        if self.guarded:
+            return []
         return S.discover_repos(self.cp)
 
     def indexed(self) -> list[dict]:
@@ -217,6 +270,11 @@ def call_tool(ob: Orbit, name: str, a: dict) -> tuple[bool, str]:
         lines = [f"Workspace folder: {ob.folder}", f"Graph: {ob.env['ORBIT_DATA_DIR']}", ""]
         if not ob.base:
             return True, ob.run([])[1]
+        if ob.guarded:
+            return False, "\n".join(lines[:1] + [
+                "", "This is your home directory (or the filesystem root), so nothing is indexed automatically.",
+                "The editor did not report an open folder. Open a project folder in the editor, or call orbit_index "
+                "with `path` set to the folder that holds your repos, or run `sdlc orbit index --folder <path>`."])
         if not rows:
             lines.append("Nothing indexed yet. Call orbit_index (or run `sdlc orbit index` in this folder).")
         for r in rows:
@@ -228,6 +286,9 @@ def call_tool(ob: Orbit, name: str, a: dict) -> tuple[bool, str]:
         return False, "\n".join(lines)
     if name == "orbit_index":
         target = _repo(ob, a.get("path")) or ob.folder
+        if guarded(target):
+            raise ToolError(f"refusing to index {target} (home directory / filesystem root). "
+                            "Pass `path` = the folder that holds your repos.")
         args = ["workspace", "index", str(target)] + ([] if a.get("wait") else ["--async"])
         code, out = ob.run(args, timeout=max(TIMEOUT, 1800) if a.get("wait") else 120)
         if code == 0 and not a.get("wait"):
@@ -253,7 +314,8 @@ def call_tool(ob: Orbit, name: str, a: dict) -> tuple[bool, str]:
         repo = _repo(ob, a.get("repo"))
         repos = [repo] if repo else ob.repos()
         if not repos:
-            raise ToolError(f"no git repositories found under {ob.folder}")
+            raise ToolError(f"no git repositories found under {ob.folder}"
+                            + (" (home directory: pass `repo`)" if ob.guarded else ""))
         parts, failed = [], 0
         for r in repos:
             code, out = ob.run(["grep"] + flags + ["--repo", str(r), "--", query] + paths, cwd=r)
@@ -304,50 +366,168 @@ def _clip(text: str) -> str:
     return text[:MAX_OUTPUT] + f"\n\n[output truncated: {len(text) - MAX_OUTPUT} more characters; narrow the query]"
 
 
-def handle(ob: Orbit, msg: dict) -> dict | None:
-    method = msg.get("method")
-    mid = msg.get("id")
-    is_request = "id" in msg
-    params = msg.get("params") or {}
+class Server:
+    """MCP over stdio. Requests from the client run on worker threads, so the
+    reader keeps going and can receive the answer to our own `roots/list`
+    request (matched by id) while a tool call waits for the workspace."""
 
-    def ok(result):
-        return {"jsonrpc": "2.0", "id": mid, "result": result}
+    def __init__(self, cp, explicit: str | None, auto_index: bool = True, stdout=None):
+        self.cp = cp
+        self.explicit = explicit if explicit and "${" not in explicit else None
+        self.auto = auto_index
+        self.out = stdout or sys.stdout
+        self.lock = threading.Lock()
+        self.ob: Orbit | None = None
+        self.ready = threading.Event()
+        self.client_roots = False
+        self.pending: dict = {}
+        self.seq = 0
+        self.workers: list[threading.Thread] = []
+        self.indexed_once: set = set()
+        if self.explicit:
+            self.set_folder(resolve_folder(cp, self.explicit), "--workspace")
 
-    def err(code, message):
-        return {"jsonrpc": "2.0", "id": mid, "error": {"code": code, "message": message}}
+    # -------------------------------------------------- workspace
+    def set_folder(self, folder: Path, why: str):
+        if self.ob and self.ob.folder == folder:
+            self.ready.set()
+            return
+        self.ob = Orbit(folder, self.cp)
+        log(f"workspace folder {folder} (from {why}), graph {self.ob.env['ORBIT_DATA_DIR']}, "
+            f"cli {' '.join(self.ob.base or ['<not found>'])}")
+        self.ready.set()
+        if self.auto and folder not in self.indexed_once:
+            self.indexed_once.add(folder)
+            threading.Thread(target=auto_index, args=(self.ob,), daemon=True).start()
 
-    if not isinstance(method, str):
-        return err(-32600, "Invalid Request") if is_request else None
-    if not is_request:  # notifications (initialized, cancelled, ...): nothing to answer
-        return None
-    if method == "initialize":
-        want = params.get("protocolVersion")
-        return ok({
-            "protocolVersion": want if want in PROTOCOLS else PROTOCOLS[0],
-            "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": SERVER_NAME, "title": "GitLab Orbit (local)", "version": _version()},
-            "instructions": f"Local GitLab Orbit code graph for workspace folder {ob.folder}. "
-                            "Use orbit_grep to find code with definition context and orbit_context to read it with callers "
-                            "and tests. If results look stale, call orbit_index.",
-        })
-    if method == "ping":
-        return ok({})
-    if method == "tools/list":
-        return ok({"tools": TOOLS})
-    if method == "tools/call":
-        name = params.get("name")
-        if name not in {t["name"] for t in TOOLS}:
-            return err(-32602, f"Unknown tool: {name}")
-        try:
-            is_error, text = call_tool(ob, name, params.get("arguments") or {})
-        except ToolError as exc:
-            is_error, text = True, str(exc)
-        except Exception as exc:  # never kill the server on one bad call
-            is_error, text = True, f"{type(exc).__name__}: {exc}"
-        return ok({"content": [{"type": "text", "text": _clip(text) or "(no output)"}], "isError": bool(is_error)})
-    if method in ("resources/list", "prompts/list"):
-        return ok({method.split("/")[0]: []})
-    return err(-32601, f"Method not found: {method}")
+    def fallback(self, why: str):
+        if not self.ready.is_set():
+            self.set_folder(resolve_folder(self.cp, None), why)
+
+    def ask_roots(self):
+        self.seq += 1
+        rid = f"orbit-mcp-roots-{self.seq}"
+        self.pending[rid] = self.on_roots
+        self.send({"jsonrpc": "2.0", "id": rid, "method": "roots/list", "params": {}})
+        t = threading.Timer(ROOTS_WAIT, self.roots_timeout, args=(rid,))
+        t.daemon = True
+        t.start()
+
+    def roots_timeout(self, rid: str):
+        if self.pending.pop(rid, None):
+            self.fallback("cwd/env: no roots answer")
+
+    def on_roots(self, msg: dict):
+        roots = ((msg.get("result") or {}).get("roots") or []) if "result" in msg else []
+        for r in roots:
+            p = uri_to_path(r.get("uri", "")) if isinstance(r, dict) else None
+            if p and p.is_dir():
+                self.set_folder(resolve_folder(self.cp, str(p)), "client roots")
+                return
+        self.fallback("cwd/env: client gave no usable root")
+
+    def orbit(self) -> Orbit:
+        if not self.ready.wait(ROOTS_WAIT):
+            self.fallback("cwd/env: roots not answered in time")
+        return self.ob
+
+    # -------------------------------------------------- transport
+    def send(self, obj):
+        with self.lock:
+            self.out.write(json.dumps(obj, ensure_ascii=False) + "\n")
+            self.out.flush()
+
+    def serve(self, stdin=None):
+        for line in (stdin or sys.stdin):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                self.send({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}})
+                continue
+            for m in (msg if isinstance(msg, list) else [msg]):
+                if not isinstance(m, dict):
+                    self.send({"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid Request"}})
+                    continue
+                self.dispatch(m)
+        for t in self.workers:
+            t.join()
+
+    def dispatch(self, m: dict):
+        method = m.get("method")
+        if method is None and "id" in m and ("result" in m or "error" in m):  # answer to our request
+            cb = self.pending.pop(m["id"], None)
+            if cb:
+                cb(m)
+            return
+        if method == "initialize":
+            caps = (m.get("params") or {}).get("capabilities") or {}
+            self.client_roots = isinstance(caps.get("roots"), dict)
+            if not self.client_roots:
+                self.fallback("cwd/env: client has no roots")
+        elif method == "notifications/initialized":
+            if self.client_roots and not self.explicit:
+                self.ask_roots()
+            return
+        elif method == "notifications/roots/list_changed":
+            if self.client_roots and not self.explicit:
+                self.ready.clear()
+                self.ask_roots()
+            return
+        if method == "tools/call" and "id" in m:
+            t = threading.Thread(target=lambda: self.send(self.handle(m)), daemon=True)
+            self.workers.append(t)
+            t.start()
+            return
+        reply = self.handle(m)
+        if reply is not None:
+            self.send(reply)
+
+    def handle(self, msg: dict) -> dict | None:
+        method = msg.get("method")
+        mid = msg.get("id")
+        params = msg.get("params") or {}
+
+        def ok(result):
+            return {"jsonrpc": "2.0", "id": mid, "result": result}
+
+        def err(code, message):
+            return {"jsonrpc": "2.0", "id": mid, "error": {"code": code, "message": message}}
+
+        if not isinstance(method, str):
+            return err(-32600, "Invalid Request") if "id" in msg else None
+        if "id" not in msg:  # other notifications (cancelled, ...): nothing to answer
+            return None
+        if method == "initialize":
+            want = params.get("protocolVersion")
+            return ok({
+                "protocolVersion": want if want in PROTOCOLS else PROTOCOLS[0],
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {"name": SERVER_NAME, "title": "GitLab Orbit (local)", "version": _version()},
+                "instructions": "Local GitLab Orbit code graph of the open workspace folder (orbit_status shows which). "
+                                "Use orbit_grep to find code with definition context and orbit_context to read it with "
+                                "callers and tests. If results look stale, call orbit_index.",
+            })
+        if method == "ping":
+            return ok({})
+        if method == "tools/list":
+            return ok({"tools": TOOLS})
+        if method == "tools/call":
+            name = params.get("name")
+            if name not in {t["name"] for t in TOOLS}:
+                return err(-32602, f"Unknown tool: {name}")
+            try:
+                is_error, text = call_tool(self.orbit(), name, params.get("arguments") or {})
+            except ToolError as exc:
+                is_error, text = True, str(exc)
+            except Exception as exc:  # never kill the server on one bad call
+                is_error, text = True, f"{type(exc).__name__}: {exc}"
+            return ok({"content": [{"type": "text", "text": _clip(text) or "(no output)"}], "isError": bool(is_error)})
+        if method in ("resources/list", "prompts/list"):
+            return ok({method.split("/")[0]: []})
+        return err(-32601, f"Method not found: {method}")
 
 
 def _version() -> str:
@@ -356,7 +536,7 @@ def _version() -> str:
 
 
 def auto_index(ob: Orbit):
-    if not ob.base or not S.cfg_bool(ob.cp, "orbit", "auto_index", True):
+    if not ob.base or ob.guarded or not S.cfg_bool(ob.cp, "orbit", "auto_index", True):
         return
     folder = str(ob.folder)
     rows = ob.indexed()
@@ -368,36 +548,9 @@ def auto_index(ob: Orbit):
     log(f"no graph for {folder} yet: " + ("background indexing started" if code == 0 else f"index failed: {out.strip()[:300]}"))
 
 
-def serve(ob: Orbit, stdin=None, stdout=None):
-    stdin = stdin or sys.stdin
-    stdout = stdout or sys.stdout
-    lock = threading.Lock()
-
-    def send(obj):
-        with lock:
-            stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
-            stdout.flush()
-
-    for line in stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            msg = json.loads(line)
-        except ValueError:
-            send({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}})
-            continue
-        batch = msg if isinstance(msg, list) else [msg]
-        replies = [r for r in (handle(ob, m) if isinstance(m, dict) else
-                               {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid Request"}}
-                               for m in batch) if r is not None]
-        if replies:
-            send(replies if isinstance(msg, list) else replies[0])
-
-
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Local GitLab Orbit MCP server (stdio)")
-    ap.add_argument("--workspace", help="workspace folder (default: current directory)")
+    ap.add_argument("--workspace", help="workspace folder (default: the client's roots, else the current directory)")
     ap.add_argument("--no-auto-index", action="store_true", help="do not start indexing an unindexed folder")
     args = ap.parse_args(argv)
     for stream in (sys.stdin, sys.stdout):
@@ -405,12 +558,7 @@ def main(argv=None) -> int:
             stream.reconfigure(encoding="utf-8")
         except Exception:
             pass
-    cp = load_cp()
-    ob = Orbit(resolve_folder(cp, args.workspace), cp)
-    log(f"workspace folder {ob.folder}, graph {ob.env['ORBIT_DATA_DIR']}, cli {' '.join(ob.base or ['<not found>'])}")
-    if not args.no_auto_index:
-        threading.Thread(target=auto_index, args=(ob,), daemon=True).start()
-    serve(ob)
+    Server(load_cp(), args.workspace, auto_index=not args.no_auto_index).serve()
     return 0
 
 

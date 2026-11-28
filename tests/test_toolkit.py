@@ -359,6 +359,95 @@ class OrbitMcpTests(unittest.TestCase):
 
 
 @unittest.skipIf(os.name == "nt", "fake orbit CLI is a POSIX script")
+class OrbitWorkspaceTests(unittest.TestCase):
+    """How orbit_mcp.py finds the workspace folder: client roots, cwd, home guard."""
+
+    def start(self, tmp: Path, *args, cwd=None, env=None):
+        e = dict(os.environ, PATH=f"{fake_orbit_bin(tmp)}{os.pathsep}{os.environ['PATH']}", SDLC_TOOLKIT_HOME=str(ROOT),
+                 SDLC_ORBIT_MCP_ROOTS_WAIT="3", **(env or {}))
+        e.pop("WORKSPACE_FOLDER", None)
+        return subprocess.Popen([sys.executable, str(ROOT / "scripts" / "orbit_mcp.py"), "--no-auto-index", *args],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                                cwd=str(cwd or tmp), env=e)
+
+    @staticmethod
+    def send(p, obj):
+        p.stdin.write(json.dumps(obj) + "\n")
+        p.stdin.flush()
+
+    @staticmethod
+    def recv(p):
+        return json.loads(p.stdout.readline())
+
+    def status(self, p, i=9):
+        self.send(p, {"jsonrpc": "2.0", "id": i, "method": "tools/call", "params": {"name": "orbit_status", "arguments": {}}})
+        m = self.recv(p)
+        self.assertEqual(m["id"], i)
+        return m["result"]["content"][0]["text"]
+
+    def finish(self, p):
+        p.stdin.close()
+        self.assertEqual(p.wait(timeout=30), 0)
+        p.stdout.close()
+
+    def test_client_roots(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            ws, other = tmp / "project", tmp / "other"
+            (ws / ".git").mkdir(parents=True)
+            (other / ".git").mkdir(parents=True)
+            p = self.start(tmp, cwd=other)
+            self.send(p, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                          "params": {"protocolVersion": "2025-06-18", "capabilities": {"roots": {"listChanged": True}}}})
+            self.assertEqual(self.recv(p)["id"], 1)
+            self.send(p, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+            # a tool call before the roots answer waits for it
+            self.send(p, {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "orbit_status", "arguments": {}}})
+            req = self.recv(p)
+            self.assertEqual(req["method"], "roots/list")
+            self.send(p, {"jsonrpc": "2.0", "id": req["id"], "result": {"roots": [{"uri": ws.as_uri(), "name": "project"}]}})
+            m = self.recv(p)
+            self.assertEqual(m["id"], 2)
+            self.assertIn(f"Workspace folder: {ws.resolve()}", m["result"]["content"][0]["text"])
+            self.assertTrue((ws / ".sdlc" / "orbit").is_dir())
+            # the editor switches folders
+            self.send(p, {"jsonrpc": "2.0", "method": "notifications/roots/list_changed"})
+            req = self.recv(p)
+            self.assertEqual(req["method"], "roots/list")
+            self.send(p, {"jsonrpc": "2.0", "id": req["id"], "result": {"roots": [{"uri": other.as_uri()}]}})
+            self.assertIn(f"Workspace folder: {other.resolve()}", self.status(p))
+            self.finish(p)
+
+    def test_cwd_fallback_without_roots(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            ws = tmp / "project"
+            (ws / ".git").mkdir(parents=True)
+            p = self.start(tmp, cwd=ws, env={"PWD": str(tmp)})  # a stale $PWD from the parent is ignored
+            self.send(p, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}})
+            self.recv(p)
+            self.send(p, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+            self.assertIn(f"Workspace folder: {ws.resolve()}", self.status(p))
+            self.finish(p)
+
+    def test_home_dir_is_not_indexed(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t)
+            home = tmp / "home"
+            (home / "repo" / ".git").mkdir(parents=True)
+            p = self.start(tmp, "--workspace", str(home), env={"HOME": str(home), "USERPROFILE": str(home)})
+            self.send(p, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+            self.recv(p)
+            self.assertIn("home directory", self.status(p))
+            self.send(p, {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "orbit_index", "arguments": {}}})
+            m = self.recv(p)
+            self.assertTrue(m["result"]["isError"])
+            self.assertIn("refusing to index", m["result"]["content"][0]["text"])
+            self.finish(p)
+            self.assertFalse((home / ".sdlc").exists())
+
+
+@unittest.skipIf(os.name == "nt", "fake orbit CLI is a POSIX script")
 class OrbitMigrationTests(unittest.TestCase):
     def test_cloud_entry_replaced_others_kept(self):
         with tempfile.TemporaryDirectory() as t:
@@ -379,8 +468,7 @@ class OrbitMigrationTests(unittest.TestCase):
             run(*cmd, env=env)
             script = str(h / ".copilot" / "sdlc-toolkit" / "scripts" / "orbit_mcp.py")
             vsj = json.loads((vs / "mcp.json").read_text())["servers"]
-            self.assertEqual(vsj["gitlab-orbit"], {"type": "stdio", "command": sys.executable,
-                                                   "args": [script, "--workspace", "${workspaceFolder}"]})
+            self.assertEqual(vsj["gitlab-orbit"], {"type": "stdio", "command": sys.executable, "args": [script]})
             self.assertEqual(vsj["atlassian"], mine_atl)  # user's own settings kept
             self.assertEqual(vsj["mine"], custom)
             self.assertIn("gitlab", vsj)
@@ -391,7 +479,7 @@ class OrbitMigrationTests(unittest.TestCase):
             self.assertEqual(cli["gitlab-orbit"]["type"], "local")
             self.assertEqual(cli["gitlab-orbit"]["args"], [script])
             cur = json.loads((h / ".cursor" / "mcp.json").read_text())["mcpServers"]
-            self.assertEqual(cur["gitlab-orbit"]["args"], [script, "--workspace", "${workspaceFolder}"])
+            self.assertEqual(cur["gitlab-orbit"]["args"], [script])
             toml = (h / ".codex" / "config.toml").read_text()
             self.assertIn('[mcp_servers."gitlab-orbit"]', toml)
             self.assertIn(f"args = {json.dumps([script])}", toml)
@@ -401,6 +489,21 @@ class OrbitMigrationTests(unittest.TestCase):
             for p, text in before.items():
                 self.assertEqual(json.loads(text) if p.suffix == ".json" else text,
                                  json.loads(p.read_text()) if p.suffix == ".json" else p.read_text(), p)
+            # an earlier toolkit-written local entry (with an editor variable) is rewritten too
+            for p in (vs / "mcp.json", h / ".claude.json"):
+                d = json.loads(p.read_text())
+                d["servers" if "servers" in d else "mcpServers"]["gitlab-orbit"] = {
+                    "type": "stdio", "command": "/usr/bin/python3",
+                    "args": ["/old/.copilot/sdlc-toolkit/scripts/orbit_mcp.py", "--workspace", "${workspaceFolder}"]}
+                p.write_text(json.dumps(d))
+            (h / ".copilot" / "sdlc-toolkit" / "manifest.json").unlink()  # even when we no longer own it
+            run(*cmd, env=env)
+            self.assertEqual(json.loads((vs / "mcp.json").read_text())["servers"]["gitlab-orbit"]["args"], [script])
+            self.assertEqual(json.loads((h / ".claude.json").read_text())["mcpServers"]["gitlab-orbit"]["args"], [script])
+            self.assertEqual(json.loads((vs / "mcp.json").read_text())["servers"]["mine"], custom)
+            for p in (vs / "mcp.json", h / ".claude.json", h / ".copilot" / "mcp-config.json", h / ".cursor" / "mcp.json",
+                      h / ".codex" / "config.toml"):
+                self.assertNotIn("${", p.read_text(), p)
             # opt-in remote mode still writes the hosted endpoint
             run(*cmd, "--set", "orbit.mcp_mode=remote", env=env)
             self.assertEqual(json.loads((vs / "mcp.json").read_text())["servers"]["gitlab-orbit"], cloud)

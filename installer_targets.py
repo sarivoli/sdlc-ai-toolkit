@@ -28,8 +28,8 @@ def _vscode_user_dir() -> Path:
 
 # agents: "md" = custom agent files, "skills" = turn toolkit agents into skills, None = skip
 # mcp: (path, top_key, shape) shape in {"typed", "url", "serverUrl", "httpUrl", "toml"}
-# workspace_var: editor variable for the open folder, passed to local (stdio) servers as
-#   `--workspace <var>`; without one the server uses its working directory (the project the editor started in).
+# Local (stdio) servers get NO workspace path or `${...}` variable: the configs are user level and
+# Copilot rejects unresolved variables. scripts/orbit_mcp.py finds the folder itself (client roots, cwd).
 TARGETS = {
     "copilot": {
         "label": "GitHub Copilot (VS Code)",
@@ -49,7 +49,6 @@ TARGETS = {
         "skills": HOME / ".cursor" / "skills",
         "agents": ("md", HOME / ".cursor" / "agents"),
         "mcp": (HOME / ".cursor" / "mcp.json", "mcpServers", "url"),
-        "workspace_var": "${workspaceFolder}",
         "reload": "Restart Cursor. Settings > Tools & MCP: connect `atlassian` and `gitlab`. Skills appear under `/`; agents are subagents.",
     },
     "antigravity": {
@@ -138,16 +137,13 @@ def convert_agent(path: Path, names: dict, text: str) -> tuple[str, str]:
 
 
 ORBIT_CLOUD_URL = "https://gitlab.com/api/v4/orbit/mcp"
-VSCODE_WORKSPACE_VAR = "${workspaceFolder}"
 
 
-def shape_server(conf: dict, shape: str, workspace_var: str | None = None) -> dict:
+def shape_server(conf: dict, shape: str) -> dict:
     """Write one server in an editor's format. `conf` is {"type": "http", "url"} or
     {"type": "stdio", "command", "args"} (a local server)."""
     if "command" in conf:
         args = list(conf.get("args", []))
-        if workspace_var:
-            args += ["--workspace", workspace_var]
         if shape == "typed":
             return {"type": "stdio", "command": conf["command"], "args": args}
         if shape == "copilot-cli":
@@ -173,10 +169,16 @@ def describe(conf: dict) -> str:
     return server_url(conf)
 
 
-def is_orbit_cloud(name: str, existing, new: dict) -> bool:
-    """True when an existing `gitlab-orbit` entry is the hosted endpoint and we install the local server."""
-    return (name == "gitlab-orbit" and isinstance(existing, dict) and "command" in new
-            and server_url(existing).rstrip("/").endswith("/api/v4/orbit/mcp"))
+def is_orbit_cloud(conf) -> bool:
+    return isinstance(conf, dict) and server_url(conf).rstrip("/").endswith("/api/v4/orbit/mcp")
+
+
+def is_orbit_legacy(name: str, existing, new: dict) -> bool:
+    """True when an existing `gitlab-orbit` entry is one we replace with the local server: the hosted
+    endpoint, or an earlier toolkit-written local entry (orbit_mcp.py, e.g. with `--workspace ${workspaceFolder}`)."""
+    if name != "gitlab-orbit" or "command" not in new or not isinstance(existing, dict) or existing == new:
+        return False
+    return is_orbit_cloud(existing) or any("orbit_mcp.py" in str(a) for a in existing.get("args", []) or [])
 
 
 TOML_BEGIN = "# >>> sdlc-ai-toolkit mcp >>>"
