@@ -84,6 +84,25 @@ earlier local `gitlab-orbit` entries are migrated (`is_orbit_legacy`).
 shared ~/.gitlab/orbit graph. Used by the impact-analysis skill step 0 and the
 full-stack checklist. See USER_MANUAL section 15.
 
+## Post-install checklist and Orbit gate
+`sdlc.py checklist` / `preflight` (functions `orbit_state`, `git_auth_state`,
+`jira_auth_state` in `scripts/sdlc.py`). The installer runs `checklist --json`
+at the end (`post_install_checklist`), prints it and writes it at the top of
+MANUAL_STEPS.md; `--no-auth-checks`, `--dry-run` or `SDLC_CHECKS_OFFLINE=1`
+skip the network checks. Git: one `git ls-remote` per remote host with
+`GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`, empty askpass, SSH
+`BatchMode` (unless the user set their own ssh command), 15 s timeout; URL
+credentials are masked. Jira: the MCP OAuth token lives in the editor and is
+not readable, so the item is `[?]` unless `JIRA_API_TOKEN`+`JIRA_EMAIL` are
+set (then `/rest/api/3/myself`, 8 s). `preflight` exits 3 when Orbit is
+missing, the folder is unindexed / partially indexed / still indexing; every
+ticket skill and agent runs it first and stops to ask (rule text in
+`sdlc-conventions`). Not gated: `work-journal` (no code reading) and
+`zope-python-standards`. The bash/PowerShell bootstraps just exec install.py,
+so there is one implementation for all OSes.
+Ideas: detect the Atlassian MCP sign-in per editor where the token store is
+documented; let `orbit_mcp.py`'s `orbit_status` reuse `orbit_state`.
+
 ## Work journal
 `[journal]` in toolkit.ini; `sdlc.py log|worklog|report` read/write an append-only
 JSONL at `~/.copilot/sdlc-journal/worklog.jsonl` (outside the toolkit home so it survives

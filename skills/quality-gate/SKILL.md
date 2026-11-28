@@ -8,6 +8,8 @@ argument-hint: PROJ-123
 
 Load `sdlc-conventions` and `zope-python-standards`.
 
+**Orbit preflight first:** run `@@SDLC@@ preflight` (rules in `sdlc-conventions`). If it stops (exit 3), tell the developer to install Orbit or run the index first to save tokens, with the command it printed, and wait for their answer.
+
 1. Run `@@SDLC@@ quality <KEY>`. It detects changed files per repo, runs the
    configured checks (`[quality]` in config), and writes `quality.md` and
    `quality.json` to the workdir. Exit code 0 = PASS, 1 = FAIL.

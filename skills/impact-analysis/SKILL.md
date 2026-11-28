@@ -10,15 +10,20 @@ Load `sdlc-conventions` and `zope-python-standards` first. Read
 `<workdir>/understanding.md`; if missing, run `jira-ticket-digest` first.
 
 ## Steps
-0. **Orbit code graph (per workspace folder).** Run
-   `@@SDLC@@ orbit index` (incremental; indexes every repo under the current
-   workspace folder into `<folder>/.sdlc/orbit`, isolated from other
-   workspaces/products/versions). Then use it for the trace:
+0. **Orbit code graph (per workspace folder) - mandatory.** Run
+   `@@SDLC@@ preflight` first (rules in `sdlc-conventions`). If it stops
+   (exit 3: Orbit not installed or this folder not indexed), tell the
+   developer to install Orbit or run the index first to save tokens, with the
+   command it printed, and wait for their answer - do not start the trace.
+   When it passes, refresh with `@@SDLC@@ orbit index` (incremental; every
+   repo under the current workspace folder, into `<folder>/.sdlc/orbit`,
+   isolated from other workspaces/products/versions). Then use it for the trace:
    `@@SDLC@@ orbit grep --repo <repo> -- "<name>"` (matches with enclosing
    definitions) and `@@SDLC@@ orbit context --repo <repo> -- <args>` (source,
    callers, tests). Use it for callers, imports, tests and XML/config
-   references; cite results as "Orbit (<workspace folder>)". If the CLI is
-   missing or fails, say so and fall back to grep/usages. Never mix results
+   references; cite results as "Orbit (<workspace folder>)". Fall back to
+   grep/usages only when the developer chose "proceed without Orbit" or the
+   CLI fails mid-analysis (say so in impact.md). Never mix results
    from another workspace folder. The `gitlab-orbit` MCP (if signed in) adds
    MR/issue context from GitLab.
 1. `@@SDLC@@ repos` - list every repo in the workspace with its branch and

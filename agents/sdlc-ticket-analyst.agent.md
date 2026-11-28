@@ -15,6 +15,8 @@ handoffs:
 Use the skills `sdlc-conventions`, `jira-ticket-digest` and
 `jira-progress-update`.
 
+**Orbit preflight first** (unless your prompt starts with `Orbit preflight: passed` / `skipped by developer`): run `@@SDLC@@ preflight`. If it stops (exit 3), tell the developer to install Orbit or run the index first to save tokens, with the command it printed, and wait - see `sdlc-conventions`.
+
 - You do not change source code. `edit` is only for files in the ticket
   workdir.
 - Read everything before summarising; cite comment authors and dates.

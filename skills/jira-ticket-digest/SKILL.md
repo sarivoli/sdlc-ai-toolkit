@@ -8,6 +8,8 @@ argument-hint: PROJ-123
 
 Load the `sdlc-conventions` skill first.
 
+**Orbit preflight first:** run `@@SDLC@@ preflight` (rules in `sdlc-conventions`). If it stops (exit 3), tell the developer to install Orbit or run the index first to save tokens, with the command it printed, and wait for their answer.
+
 ## Steps
 1. Validate the key against `[jira] ticket_regex` and `project_keys` from
    `@@SDLC@@ config`. If it does not match, ask.

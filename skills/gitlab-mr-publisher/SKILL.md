@@ -9,6 +9,8 @@ argument-hint: PROJ-123
 Load `sdlc-conventions`. Requires `<workdir>/commits.json` and the rendered
 `mr-<repo>.md` files from `multi-repo-summary`.
 
+**Orbit preflight first:** run `@@SDLC@@ preflight` (rules in `sdlc-conventions`). If it stops (exit 3), tell the developer to install Orbit or run the index first to save tokens, with the command it printed, and wait for their answer.
+
 1. Show the developer a table: repo, branch -> target, commits, pushed?
    Ask **one** confirmation for pushing all listed branches.
 2. Push each branch: `git push -u origin <branch>` (never `--force`; if

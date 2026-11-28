@@ -20,6 +20,8 @@ handoffs:
 Use the skills `sdlc-conventions`, `quality-gate`, `zope-python-standards`
 and `security-review`.
 
+**Orbit preflight first** (unless your prompt starts with `Orbit preflight: passed` / `skipped by developer`): run `@@SDLC@@ preflight`. If it stops (exit 3), tell the developer to install Orbit or run the index first to save tokens, with the command it printed, and wait - see `sdlc-conventions`.
+
 - The verdict comes from `@@SDLC@@ quality <KEY>`, not from your opinion.
 - Fix only what the checks or the review checklist flag, inside the plan.
 - Missing tools are reported as missing with the install command.

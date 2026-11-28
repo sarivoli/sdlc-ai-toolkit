@@ -23,6 +23,8 @@ Standard library only. Python 3.8+. Works on Windows, macOS and Linux.
     python sdlc.py log KEY --activity A --summary "..."   record work in the personal work journal
     python sdlc.py worklog [--ticket K] [--period week]    list journal entries
     python sdlc.py report --period week|month|year         work report from the journal
+    python sdlc.py preflight [--folder F]      gate for ticket work: Orbit installed + folder indexed (exit 3 = stop)
+    python sdlc.py checklist [--offline]       post-install checklist: Orbit index, git auth, Jira auth
     python sdlc.py doctor                      check the installation
 """
 from __future__ import annotations
@@ -861,6 +863,352 @@ def cmd_orbit(cp, args) -> int:
 
 
 # --------------------------------------------------------------------------
+# Setup checks: Orbit preflight (gate for ticket work) + post-install checklist
+# All checks are non-interactive, time out quickly and never print secrets.
+# --------------------------------------------------------------------------
+
+ORBIT_INSTALL_CMD = "npm install -g @gitlab/orbit"
+_INDEXING = ("indexing", "pending", "queued", "running", "in_progress", "in-progress", "started")
+_URL_CREDS = re.compile(r"(\w+://)[^/@\s]+@")
+
+
+def self_command() -> str:
+    """How to call this helper CLI again (shown in hints)."""
+    script = Path(__file__).resolve().as_posix()
+    if os.name == "nt":
+        launcher = "py -3" if shutil.which("py") else "python"
+    else:
+        exe = sys.executable
+        launcher = exe if exe and " " not in exe else "python3"
+    return f'{launcher} "{script}"'
+
+
+def redact(text: str) -> str:
+    """Strip credentials embedded in URLs (https://user:token@host)."""
+    return _URL_CREDS.sub(r"\1***@", text or "")
+
+
+def checks_offline(args=None) -> bool:
+    return bool(getattr(args, "offline", False)) or os.environ.get("SDLC_CHECKS_OFFLINE", "") in ("1", "yes", "true")
+
+
+def _home_or_root(p: Path) -> bool:
+    try:
+        home = Path.home().resolve()
+    except (RuntimeError, KeyError):
+        home = None
+    return p == home or p == Path(p.anchor)
+
+
+def _orbit_rows(base: list[str], data: Path, folder: Path, timeout: int = 30) -> list[dict] | None:
+    """Indexed repos in the folder's graph; None when the CLI could not answer."""
+    if not data.is_dir() or not any(data.iterdir()):
+        return []
+    env = dict(os.environ, ORBIT_DATA_DIR=str(data), ORBIT_TELEMETRY_ENABLED="false", ORBIT_NO_GITLAB="1")
+    try:
+        proc = subprocess.run(base + ["workspace", "list", "-F", "json"], cwd=str(folder), env=env,
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        rows = json.loads(proc.stdout or "[]")
+    except ValueError:
+        return None
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else None
+
+
+def orbit_state(cp, folder: Path) -> dict:
+    """Is Orbit installed, and is every repo of this workspace folder indexed?
+
+    state: disabled | not-installed | no-folder | no-repos | not-indexed | partial | indexing | unknown | indexed
+    ok: True when ticket work can go ahead without extra token cost."""
+    sdlc = self_command()
+    index_cmd = f'{sdlc} orbit index --folder "{folder.as_posix()}"'
+    st = {"name": "orbit", "folder": str(folder), "install_cmd": ORBIT_INSTALL_CMD, "index_cmd": index_cmd,
+          "indexed": [], "missing": [], "cli": None}
+    if not cfg_bool(cp, "orbit", "enabled", True):
+        return dict(st, state="disabled", ok=True, summary="Orbit is turned off in the team config ([orbit] enabled = no).")
+    base = orbit_command()
+    st["cli"] = " ".join(base) if base else None
+    if not base:
+        return dict(st, state="not-installed", ok=False,
+                    summary="GitLab Orbit CLI is not installed.",
+                    steps=[f"Install it (needs Node.js): {ORBIT_INSTALL_CMD}",
+                           f"Then index this workspace folder: {index_cmd}"])
+    if _home_or_root(folder):
+        return dict(st, state="no-folder", ok=False,
+                    summary=f"{folder} is your home directory / the filesystem root, not a workspace folder.",
+                    steps=["Open the folder that holds your repos in the editor (or cd into it)",
+                           f'Then run: {sdlc} orbit index --folder "<folder with your repos>"'])
+    old = os.environ.get("SDLC_WORKSPACE_ROOT")
+    os.environ["SDLC_WORKSPACE_ROOT"] = str(folder)
+    try:
+        repos = [folder] if is_repo(folder) else discover_repos(cp)
+    finally:
+        if old is None:
+            os.environ.pop("SDLC_WORKSPACE_ROOT", None)
+        else:
+            os.environ["SDLC_WORKSPACE_ROOT"] = old
+    if not repos:
+        return dict(st, state="no-repos", ok=True, summary=f"No git repositories under {folder}; nothing to index yet.",
+                    steps=[f"After cloning your repos there, run: {index_cmd}"])
+    data = folder / cfg(cp, "workspace", "work_dir", ".sdlc") / "orbit"
+    rows = _orbit_rows(base, data, folder)
+    if rows is None:
+        return dict(st, state="unknown", ok=False, summary="Could not read the Orbit graph (the CLI failed or timed out).",
+                    steps=[f"Re-index this workspace folder: {index_cmd}"])
+    by_path = {}
+    for r in rows:
+        try:
+            by_path[str(Path(str(r.get("repo_path", ""))).resolve())] = r
+        except (OSError, ValueError):
+            continue
+    indexed = [str(p) for p in repos if str(p.resolve()) in by_path]
+    missing = [str(p) for p in repos if str(p.resolve()) not in by_path]
+    busy = [p for p in indexed if str(by_path[str(Path(p).resolve())].get("status", "")).lower() in _INDEXING]
+    st.update(indexed=indexed, missing=missing)
+    if not indexed:
+        return dict(st, state="not-indexed", ok=False,
+                    summary=f"Orbit is installed but {folder} is not indexed yet ({len(repos)} repo(s)).",
+                    steps=[f"Index it (one time, then incremental): {index_cmd}"])
+    if busy and not missing:
+        return dict(st, state="indexing", ok=False,
+                    summary=f"Orbit is still indexing {len(busy)} repo(s) in {folder}.",
+                    steps=[f"Wait until it finishes (check: {sdlc} orbit status), or run it in the foreground: {index_cmd}"])
+    if missing:
+        return dict(st, state="partial", ok=False,
+                    summary=f"{len(missing)} of {len(repos)} repo(s) in {folder} are not indexed: "
+                            + ", ".join(Path(m).name for m in missing),
+                    steps=[f"Index the workspace folder again (incremental): {index_cmd}"])
+    return dict(st, state="indexed", ok=True, summary=f"{len(indexed)} repo(s) indexed in {data}.")
+
+
+_GIT_BATCH = {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never", "GIT_ASKPASS": "",
+              "SSH_ASKPASS": "", "SSH_ASKPASS_REQUIRE": "never"}
+
+
+def _remote_host(url: str) -> tuple[str, str]:
+    """(scheme, host) of a git remote URL; scheme is ssh | https | http | file."""
+    m = re.match(r"^(\w+)://(?:[^@/]+@)?([^/:]+)", url)
+    if m:
+        return m.group(1).lower(), m.group(2).lower()
+    m = re.match(r"^(?:[^@/]+@)?([^/:]+):(?!/)", url)  # scp-like git@host:group/repo.git
+    if m and not re.match(r"^[A-Za-z]:[\\/]", url):
+        return "ssh", m.group(1).lower()
+    return "file", ""
+
+
+def _git_noninteractive_env(repo: Path | None) -> dict:
+    env = dict(os.environ, **_GIT_BATCH)
+    custom = os.environ.get("GIT_SSH_COMMAND") or os.environ.get("GIT_SSH")
+    if not custom and repo is not None:
+        custom = git(repo, "config", "--get", "core.sshCommand", check=False)
+    if not custom:
+        env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes -o ConnectTimeout=8"
+    return env
+
+
+def git_auth_state(cp, folder: Path, offline: bool = False, timeout: int = 15) -> dict:
+    """Can git reach the remotes of this workspace without asking for a password?"""
+    st = {"name": "git", "checked": []}
+    gl_host = _remote_host(cfg(cp, "gitlab", "url", "https://gitlab.com"))[1] or "gitlab.com"
+    steps_ssh = [f"SSH (recommended): ssh-keygen -t ed25519   then add ~/.ssh/id_ed25519.pub in GitLab > Preferences > SSH Keys",
+                 f"Check: ssh -T git@{gl_host}   (accept the host key once)"]
+    steps_https = ["HTTPS: create a GitLab personal access token (scopes read_repository, write_repository)",
+                   "Store it with a credential helper: git config --global credential.helper manager "
+                   "(Windows/macOS Git Credential Manager; or osxkeychain / libsecret), then run any git fetch once "
+                   "and enter your user name + the token"]
+    if offline:
+        return dict(st, state="unverified", ok=False, summary="Not checked (offline mode).",
+                    steps=[f"Check later with: {self_command()} checklist"])
+    if not shutil.which("git"):
+        return dict(st, state="pending", ok=False, summary="git is not installed / not on PATH.",
+                    steps=["Install Git, then re-run the installer"])
+    old = os.environ.get("SDLC_WORKSPACE_ROOT")
+    os.environ["SDLC_WORKSPACE_ROOT"] = str(folder)
+    try:
+        repos = [] if _home_or_root(folder) or not folder.exists() else ([folder] if is_repo(folder) else discover_repos(cp))
+    except SystemExit:
+        repos = []
+    finally:
+        if old is None:
+            os.environ.pop("SDLC_WORKSPACE_ROOT", None)
+        else:
+            os.environ["SDLC_WORKSPACE_ROOT"] = old
+    seen, todo = set(), []
+    for repo in repos:
+        remotes = git(repo, "remote", check=False).split()
+        if not remotes:
+            continue
+        name = "origin" if "origin" in remotes else remotes[0]
+        url = git(repo, "remote", "get-url", name, check=False)
+        key = _remote_host(url)
+        if not url or key in seen:
+            continue
+        seen.add(key)
+        todo.append((repo, name, url, key))
+        if len(todo) >= 5:
+            break
+    if not todo:
+        if shutil.which("ssh"):
+            try:
+                p = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-T", f"git@{gl_host}"],
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                                   env=dict(os.environ, **{k: v for k, v in _GIT_BATCH.items() if k.startswith("SSH")}))
+                if "welcome" in p.stdout.lower():
+                    return dict(st, state="done", ok=True, summary=f"SSH key accepted by {gl_host} (no repos found to test yet).")
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        return dict(st, state="pending", ok=False,
+                    summary=f"No repo remotes to test under {folder}, and SSH to {gl_host} was not accepted.",
+                    steps=steps_ssh + steps_https)
+    bad = []
+    for repo, name, url, (scheme, host) in todo:
+        label = f"{host or 'local'} ({scheme})"
+        try:
+            p = subprocess.run(["git", "-c", "credential.interactive=never", "-C", str(repo), "ls-remote", "--heads", name],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                               text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                               env=_git_noninteractive_env(repo))
+            good, why = p.returncode == 0, redact((p.stderr.strip().splitlines() or [""])[-1])[:200]
+        except subprocess.TimeoutExpired:
+            good, why = False, f"timed out after {timeout}s"
+        except OSError as exc:
+            good, why = False, str(exc)
+        st["checked"].append({"remote": label, "repo": repo.name, "ok": good, **({} if good else {"error": why})})
+        if not good:
+            bad.append((label, scheme, why))
+    if not bad:
+        return dict(st, state="done", ok=True,
+                    summary="git can reach " + ", ".join(c["remote"] for c in st["checked"]) + " without a prompt.")
+    steps = []
+    if any(s == "ssh" for _, s, _ in bad):
+        steps += steps_ssh
+    if any(s in ("https", "http") for _, s, _ in bad):
+        steps += steps_https
+    steps.append(f"Re-check with: {self_command()} checklist")
+    return dict(st, state="pending", ok=False,
+                summary="git could not authenticate to " + "; ".join(f"{l}: {w}" if w else l for l, _, w in bad), steps=steps)
+
+
+_JIRA_TOKEN_VARS = ("JIRA_API_TOKEN", "ATLASSIAN_API_TOKEN")
+_JIRA_USER_VARS = ("JIRA_EMAIL", "JIRA_USER", "ATLASSIAN_EMAIL", "ATLASSIAN_USER")
+
+
+def jira_auth_state(cp, offline: bool = False, timeout: int = 8, opener=None) -> dict:
+    """Jira is reached through the Atlassian MCP server (OAuth kept by the editor).
+    An API token in the environment, if present, is verified with /rest/api/3/myself."""
+    import base64
+    import urllib.error
+    import urllib.request
+    st = {"name": "jira"}
+    site = cfg(cp, "jira", "site", "").rstrip("/")
+    sign_in = ["Sign in once: VS Code > Command Palette > `MCP: List Servers` > `atlassian` > Start Server > approve "
+               "in the browser (other editors: start the `atlassian` MCP server, e.g. `/mcp` in Claude Code / Gemini CLI)",
+               "Confirm: ask the agent to call the Atlassian tool `atlassianUserInfo` (it shows your Jira user)"]
+    if not site or "your-company" in site:
+        return dict(st, state="pending", ok=False, summary="Jira site is not configured yet.",
+                    steps=["python install.py --set jira.site=https://<your-site>.atlassian.net --set jira.project_keys=<KEY>"]
+                    + sign_in)
+    token = next((os.environ[v] for v in _JIRA_TOKEN_VARS if os.environ.get(v)), "")
+    user = next((os.environ[v] for v in _JIRA_USER_VARS if os.environ.get(v)), "")
+    if not token or not user:
+        return dict(st, state="unverified", ok=False,
+                    summary=f"{site}: the Atlassian MCP sign-in is stored inside your editor and cannot be checked from "
+                            "here. If you already signed in, you're done.",
+                    steps=sign_in)
+    if offline:
+        return dict(st, state="unverified", ok=False, summary="Jira API token found but not checked (offline mode).",
+                    steps=[f"Check later with: {self_command()} checklist"])
+    auth = base64.b64encode(f"{user}:{token}".encode("utf-8")).decode("ascii")
+    req = urllib.request.Request(f"{site}/rest/api/3/myself",
+                                 headers={"Authorization": f"Basic {auth}", "Accept": "application/json"})
+    try:
+        with (opener or urllib.request.urlopen)(req, timeout=timeout) as resp:
+            body = json.loads(resp.read().decode("utf-8") or "{}")
+        who = body.get("displayName") or body.get("emailAddress") or "your account"
+        return dict(st, state="done", ok=True, summary=f"Jira API token works for {site} (signed in as {who}).",
+                    steps=["The agents still use the `atlassian` MCP server: sign in there once too if you have not"])
+    except urllib.error.HTTPError as exc:
+        why = f"HTTP {exc.code}" + (" - token or e-mail rejected" if exc.code in (401, 403) else "")
+    except Exception as exc:  # network, TLS, timeout, bad JSON
+        why = f"{type(exc).__name__}: {redact(str(exc))[:120]}"
+    return dict(st, state="pending", ok=False, summary=f"Jira API check against {site} failed ({why}).",
+                steps=["Create a new token at https://id.atlassian.com/manage-profile/security/api-tokens and set "
+                       "JIRA_API_TOKEN + JIRA_EMAIL in your environment (never in toolkit.ini)"] + sign_in)
+
+
+CHECK_TITLES = {
+    "orbit": "Orbit code index (MANDATORY - required to save tokens)",
+    "git": "Git authentication",
+    "jira": "Jira authentication",
+}
+_MARK = {"done": "[x]", "indexed": "[x]", "disabled": "[x]", "no-repos": "[x]", "unverified": "[?]", "indexing": "[~]"}
+
+
+def checklist(cp, folder: Path, offline: bool = False) -> list[dict]:
+    items = [orbit_state(cp, folder), git_auth_state(cp, folder, offline), jira_auth_state(cp, offline)]
+    for it in items:
+        it["title"] = CHECK_TITLES[it["name"]]
+        if it["name"] == "orbit" and it["state"] == "no-repos":
+            it["ok"] = False  # ticket work may go ahead, but the mandatory index is still to do
+        it["mark"] = "[x]" if it["ok"] else _MARK.get(it["state"], "[ ]")
+    return items
+
+
+def render_checklist(items: list[dict]) -> str:
+    out = []
+    for i, it in enumerate(items, 1):
+        out.append(f"{i}. {it['mark']} **{it['title']}** - {it['summary']}")
+        if not it["ok"]:
+            out += [f"   - {s}" for s in it.get("steps", [])]
+    return "\n".join(out)
+
+
+def _checks_folder(cp, args) -> Path:
+    if getattr(args, "folder", None):
+        return Path(args.folder).expanduser().resolve()
+    folder = orbit_folder(cp, args)
+    if _home_or_root(folder) and workspace_root(cp).is_dir():
+        return workspace_root(cp)  # run from ~: use the configured workspace root
+    return folder
+
+
+def cmd_preflight(cp, args) -> int:
+    """Gate for every ticket workflow: Orbit installed and this folder indexed."""
+    st = orbit_state(cp, _checks_folder(cp, args))
+    if args.json:
+        print(json.dumps(st, indent=2))
+        return 0 if st["ok"] else 3
+    if st["ok"]:
+        print(f"[sdlc] preflight OK - Orbit: {st['summary']}")
+        return 0
+    print("[sdlc] PREFLIGHT STOP - Orbit code index missing (needed to save tokens)")
+    print(f"  {st['summary']}")
+    for s in st.get("steps", []):
+        print(f"  -> {s}")
+    print("  Without the index the agent has to read many more files to analyse the ticket, which costs far more tokens.")
+    print("  Ask the developer to run the command above (or let you run it), or to say explicitly "
+          "'proceed without Orbit'.")
+    return 3
+
+
+def cmd_checklist(cp, args) -> int:
+    items = checklist(cp, _checks_folder(cp, args), checks_offline(args))
+    if args.json:
+        print(json.dumps(items, indent=2))
+    else:
+        print("Post-install checklist\n")
+        print(render_checklist(items))
+        print("\n[x] done  [ ] to do  [~] in progress  [?] could not be verified automatically")
+    return 0 if all(i["ok"] for i in items) else 1
+
+
+# --------------------------------------------------------------------------
 # Work journal: one personal, cross-workspace log of work per ticket
 # --------------------------------------------------------------------------
 
@@ -1072,6 +1420,9 @@ def cmd_doctor(cp, args) -> int:
     line(True, f"Work journal: {jp} ({len(read_journal(cp))} entries)")
     ob = orbit_command()
     line(bool(ob) or not cfg_bool(cp, "orbit", "enabled", True), "Orbit CLI (code graph for impact analysis)" + ("" if ob else " - not found: npm install -g @gitlab/orbit"))
+    if ob and cfg_bool(cp, "orbit", "enabled", True):
+        st = orbit_state(cp, _checks_folder(cp, args))
+        line(st["ok"], f"Orbit index for {st['folder']}: {st['summary']}" + ("" if st["ok"] else f" -> {st['index_cmd']}"))
     for tool in ("ruff", "bandit", "mypy"):
         print(("  ✅ " if shutil.which(tool) else "  ·  ") + f"{tool} {'found' if shutil.which(tool) else 'not found (optional)'}")
     print("\nAll good." if ok else "\nSome items need attention (see ⚠ above and MANUAL_STEPS.md).")
@@ -1107,6 +1458,10 @@ def main(argv=None) -> int:
         else:
             p.add_argument("--by", choices=["day", "ticket"], default="day"); p.add_argument("--out")
     sub.add_parser("doctor")
+    for name in ("preflight", "checklist"):
+        p = sub.add_parser(name); p.add_argument("--folder"); p.add_argument("--json", action="store_true")
+        if name == "checklist":
+            p.add_argument("--offline", action="store_true", help="skip the network checks (git remotes, Jira API)")
     args = ap.parse_args(argv)
     cp = load_config()
     handler = globals()["cmd_" + args.cmd.replace("-", "_")]

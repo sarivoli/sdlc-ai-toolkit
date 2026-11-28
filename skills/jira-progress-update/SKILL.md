@@ -8,6 +8,8 @@ argument-hint: PROJ-123 <stage>
 
 Load `sdlc-conventions`. Read `[jira]` from `@@SDLC@@ config`.
 
+**Orbit preflight first:** run `@@SDLC@@ preflight` (rules in `sdlc-conventions`). If it stops (exit 3), tell the developer to install Orbit or run the index first to save tokens, with the command it printed, and wait for their answer. (Skip it when the stage that calls this skill already ran it.)
+
 ## When to post
 | `progress_updates` | Stages that get a comment |
 |--------------------|---------------------------|

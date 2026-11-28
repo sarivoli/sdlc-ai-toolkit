@@ -21,6 +21,8 @@ Use the skills `sdlc-conventions`, `zope-python-standards`,
 `impact-analysis`, `implementation-plan` (and `acquire-codebase-knowledge`
 for unfamiliar repos).
 
+**Orbit preflight first** (unless your prompt starts with `Orbit preflight: passed` / `skipped by developer`): run `@@SDLC@@ preflight`. If it stops (exit 3), tell the developer to install Orbit or run the index first to save tokens, with the command it printed, and wait - see `sdlc-conventions`.
+
 - Source code is read-only for you; write only to the ticket workdir.
 - Use `execute` only for read-only commands (`git log`, `git grep`,
   `@@SDLC@@ repos`, test discovery). Never run commands that modify repos.

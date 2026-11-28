@@ -34,6 +34,13 @@ to the specialist agent as a subagent, keep a todo list of stages, and stop
 at the human checkpoints. Load the `sdlc-conventions` skill first.
 
 ## Flow
+0. **Orbit preflight.** Run `@@SDLC@@ preflight` before anything else. If it
+   stops (exit 3: Orbit not installed or this workspace folder not indexed),
+   tell the developer to install Orbit or run the index first to save tokens,
+   show the exact command it printed, and wait (index now / install / proceed
+   without Orbit - only on their explicit words; see `sdlc-conventions`).
+   Start every subagent prompt with `Orbit preflight: passed` or
+   `Orbit preflight: skipped by developer`.
 1. **Resume check.** Run `@@SDLC@@ workdir <KEY>` and list the files there.
    Skip stages whose output already exists (tell the developer you are
    resuming and from where).

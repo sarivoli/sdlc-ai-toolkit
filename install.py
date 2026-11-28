@@ -8,6 +8,7 @@
     python install.py --no-hooks      don't add git hooks to workspace repos
     python install.py --target all    also install into Claude Code, Cursor, Antigravity, Gemini CLI, Codex
     python install.py --uninstall     remove everything this installer added
+    python install.py --no-auth-checks   skip the network checks of the post-install checklist
 Or one line: curl -fsSL https://raw.githubusercontent.com/sarivoli/sdlc-ai-toolkit/main/install.sh | bash
 
 What it does for GitHub Copilot (user level, so it works in every workspace); other
@@ -60,6 +61,7 @@ class Installer:
         self.done: list[str] = []
         self.manual: list[str] = []
         self.notes: list[str] = []
+        self.checks: list[dict] = []
 
     @staticmethod
     def _resolve_targets(spec: str) -> list:
@@ -491,6 +493,37 @@ class Installer:
                                f"`pip install {' '.join(missing)}` (or add them to your buildout / dev requirements). "
                                "Missing tools are reported as 'missing', never as passed.")
 
+    def post_install_checklist(self, root: Path):
+        """Orbit index (mandatory), git auth, Jira auth - checked, never prompting, quick timeouts."""
+        script = self.home / "scripts" / "sdlc.py"
+        home = self.home
+        if not script.exists():  # dry run before the first install
+            script, home = SRC / "scripts" / "sdlc.py", SRC
+        cmd = [sys.executable, str(script), "checklist", "--json"]
+        if self.dry or getattr(self.args, "no_auth_checks", False):
+            cmd.append("--offline")
+        env = dict(os.environ, SDLC_TOOLKIT_HOME=str(home), SDLC_WORKSPACE_ROOT=str(root),
+                   GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
+        try:
+            proc = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                  text=True, encoding="utf-8", errors="replace", env=env, timeout=150)
+            self.checks = json.loads(proc.stdout)
+        except Exception:
+            self.checks = []
+        if not self.checks:
+            self.checks = [{"name": n, "title": t, "ok": False, "mark": "[?]", "summary": "check could not run",
+                            "steps": [f"Run: {self.sdlc_command()} checklist"]}
+                           for n, t in (("orbit", "Orbit code index (MANDATORY - required to save tokens)"),
+                                        ("git", "Git authentication"), ("jira", "Jira authentication"))]
+
+    def _checklist_lines(self) -> list[str]:
+        out = []
+        for i, it in enumerate(self.checks, 1):
+            out.append(f"{i}. {it['mark']} **{it['title']}** - {it['summary']}")
+            if not it.get("ok"):
+                out += [f"   - {s}" for s in it.get("steps", [])]
+        return out
+
     def finish(self):
         if "copilot" in self.targets:
           self.manual.append("Reload VS Code (`Developer: Reload Window`). In Copilot Chat open the agent picker: you should see "
@@ -500,7 +533,15 @@ class Installer:
                            "in GitHub organization Copilot policies, otherwise the Jira/GitLab tools stay disabled.")
         self.manual.append(f"Check everything at any time: `{self.sdlc_command()} doctor`")
         report = ["# SDLC AI Toolkit - installation report", "",
-                  f"Version {VERSION} · {self.manifest['installed_at']}", "", "## Done", ""]
+                  f"Version {VERSION} · {self.manifest['installed_at']}", ""]
+        if self.checks:
+            report += ["## Post-install checklist", "",
+                       "Finish these three before your first ticket. The Orbit index is **mandatory**: ticket analysis "
+                       "stops and asks you to index first, because without it the agents read far more code (tokens).", ""]
+            report += self._checklist_lines()
+            report += ["", "`[x]` done · `[ ]` to do · `[~]` in progress · `[?]` not verifiable automatically. "
+                       f"Re-check any time: `{self.sdlc_command()} checklist`", ""]
+        report += ["## Done", ""]
         report += [f"- {d}" for d in self.done]
         report += ["", "## Manual steps (do these now)", ""]
         report += [f"{i}. {m}" for i, m in enumerate(self.manual, 1)]
@@ -520,6 +561,12 @@ class Installer:
             print(f"  {WARN}{i}. {m}")
         for n in self.notes:
             print(f" {INFO} {n}")
+        if self.checks:
+            print("\n  POST-INSTALL CHECKLIST - finish before your first ticket (Orbit index is MANDATORY to save tokens):")
+            for ln in self._checklist_lines():
+                print(("  " + ln).replace("**", ""))
+            print(f"  [x] done  [ ] to do  [~] in progress  [?] not verifiable automatically. "
+                  f"Re-check: {self.sdlc_command()} checklist")
         print(f"\n  This report is saved at {(self.home / 'MANUAL_STEPS.md').as_posix()}")
 
     def run(self):
@@ -535,6 +582,7 @@ class Installer:
         self.install_orbit(cp, root)
         self.install_hooks(root)
         self.optional_tools()
+        self.post_install_checklist(root)
         self.finish()
 
     # ------------------------------------------------------------ uninstall
@@ -598,6 +646,8 @@ def main():
     ap.add_argument("--set", action="append", metavar="SECTION.KEY=VALUE", help="personal config override (repeatable)")
     ap.add_argument("--workspace", help="folder containing your repos")
     ap.add_argument("--no-hooks", action="store_true")
+    ap.add_argument("--no-auth-checks", action="store_true",
+                    help="post-install checklist: skip the network checks (git remotes, Jira API)")
     ap.add_argument("--target", default="auto", metavar="EDITORS",
                     help="editors to install into: auto (default: Copilot + every editor found), all, or a comma list of "
                          + ", ".join(T.ALL))
