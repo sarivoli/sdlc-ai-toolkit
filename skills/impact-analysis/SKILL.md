@@ -65,3 +65,6 @@ the trace, not from guesses. Re-run the trace after implementation so the
 Jira QA hand-off reflects the real diff.
 
 Never edit files during impact analysis.
+
+## Panel (when the `sdlc-ui` tools are available)
+End with `sdlc_ui_summary`: affected repos and modules as items (state `warn` for high-risk ones), risk level as a fact, and "Review the plan" as the next step. Otherwise write it as text. Rules: `sdlc-conventions` > Panels in chat.

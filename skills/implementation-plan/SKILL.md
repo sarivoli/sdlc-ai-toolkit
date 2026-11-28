@@ -20,7 +20,8 @@ Load `sdlc-conventions`. Read `<workdir>/understanding.md` and `<workdir>/impact
 3. Write steps grouped by repo, tests first where practical.
 4. Write the planned commits already in the commit format
    (`@@SDLC@@ template commit-message.txt`), one logical change each.
-5. Fill `@@SDLC@@ template implementation-plan.md`, save to `<workdir>/plan.md`, show it.
+5. Fill `@@SDLC@@ template implementation-plan.md`, save to `<workdir>/plan.md`, show it
+   (with the `sdlc_ui_plan` panel when the `sdlc-ui` tools are available).
 6. Optionally offer the `Critical thinking mode instructions` agent to
    challenge the plan for high-risk tickets.
 7. **Stop.** Only when the developer replies *approve* (or equivalent), write
@@ -28,3 +29,6 @@ Load `sdlc-conventions`. Read `<workdir>/understanding.md` and `<workdir>/impact
    changes, update plan.md and ask again.
 8. If `[jira] progress_updates` is `every_stage` or `milestones`, offer a
    "Plan approved" progress comment (confirmation required).
+
+## Panel (when the `sdlc-ui` tools are available)
+Show the plan with `sdlc_ui_plan` `{ticket}`. Its Approve button sends *approve* into the chat; write `plan.approved` only after that message arrives. Otherwise write it as text. Rules: `sdlc-conventions` > Panels in chat.

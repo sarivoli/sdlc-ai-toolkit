@@ -65,6 +65,32 @@ low: without it the agent reads far more files to understand the code.
   `Orbit preflight: skipped by developer`; a subagent that gets either line
   does not run it again.
 
+## Panels in chat (`sdlc-ui` MCP tools)
+In editors that show MCP Apps (VS Code Copilot Chat, Cursor) the `sdlc-ui`
+server offers `sdlc_ui_*` tools that draw an interactive A2UI panel in the
+chat. When the tools are available, use them instead of long text; when they
+are not (Claude Code, Codex, Gemini CLI, or `[ui] mode = off`), write the
+same content as text, exactly as before.
+
+| When | Tool |
+|------|------|
+| Before every `[safety] confirm_before` action (show repo, branch, files, exact text/command in `preview`) | `sdlc_ui_confirm` |
+| Checkpoint 1: plan.md ready for approval | `sdlc_ui_plan` `{ticket}` |
+| After `@@SDLC@@ quality <KEY>` | `sdlc_ui_quality` `{ticket}` |
+| Resume a ticket / "where is PROJ-123?" | `sdlc_ui_ticket` `{ticket}` |
+| `preflight` stopped, or the developer asks about setup | `sdlc_ui_checklist` |
+| End of every stage or skill run: what was done, results, links, next step | `sdlc_ui_summary` |
+| Before installing / updating the toolkit, and after it | `sdlc_ui_install_preview`, `sdlc_ui_install_report` |
+
+Rules:
+- A panel never replaces the developer's answer. Its buttons only send a
+  reply ("yes", "approve", "changes: ...") into the chat as the developer's
+  message. Keep waiting for that message exactly as if you had asked in text;
+  never act on a panel being shown.
+- One panel per step: do not repeat its content as text afterwards. One line
+  saying what you are waiting for is enough.
+- If a `sdlc_ui_*` call fails, say so in one line and fall back to text.
+
 ## Branch convention (team)
 `<type>/<username>/<KEY>`; types `feature`, `bugfix`, `spike`, `refactor`,
 `chore`. For `spike` the middle part is the POC name, not the user.

@@ -2,7 +2,7 @@
 name: SDLC Ticket Analyst
 description: Reads a Jira ticket completely - description, every comment, links, sub-tasks - and writes the team's understanding summary with acceptance criteria and open questions. Read-only on code; can post the summary to Jira after confirmation.
 argument-hint: PROJ-123
-tools: ['read', 'search', 'edit', 'execute', 'todo', 'web', 'atlassian/*']
+tools: ['read', 'search', 'edit', 'execute', 'todo', 'web', 'atlassian/*', 'sdlc-ui/*']
 handoffs:
   - label: Continue to impact analysis
     agent: SDLC Impact Analyst

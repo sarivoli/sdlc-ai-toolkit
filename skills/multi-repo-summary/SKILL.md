@@ -41,3 +41,6 @@ Load `sdlc-conventions`.
    `summary` again so every MR links to its siblings and the summary table
    has MR links.
 5. Show `summary.md` to the developer.
+
+## Panel (when the `sdlc-ui` tools are available)
+Show the consolidated summary with `sdlc_ui_summary`: repos and commit counts as items, MR and Jira links as links. Otherwise write it as text. Rules: `sdlc-conventions` > Panels in chat.

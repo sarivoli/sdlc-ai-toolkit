@@ -45,3 +45,6 @@ Whenever you finish a unit of work on a ticket, run ONE command:
    tickets completed, time spread) but do not invent anything that is not in
    the journal. Offer `--out` to save it as Markdown.
 4. Empty result: say so and check `@@SDLC@@ doctor` for the journal path.
+
+## Panel (when the `sdlc-ui` tools are available)
+For reports, show `sdlc_ui_summary` (status `info`): totals as facts, tickets as items. Logging an entry needs no panel. Otherwise write it as text. Rules: `sdlc-conventions` > Panels in chat.

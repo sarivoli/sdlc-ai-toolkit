@@ -21,6 +21,9 @@ Version 1.0 · For Python / Zope teams using Jira Cloud, GitLab, VS Code and Git
 13. [Upgrade and uninstall](#13-upgrade-and-uninstall)
     (Orbit code graph: see [section 15](#15-orbit-code-graph-for-impact-analysis))
 14. [Safety rules the agents follow](#14-safety-rules-the-agents-follow)
+15. [Orbit code graph for impact analysis](#15-orbit-code-graph-for-impact-analysis)
+16. [Work journal and reports](#16-work-journal-and-reports)
+17. [Panels in chat (A2UI)](#17-panels-in-chat-a2ui)
 
 ---
 
@@ -676,3 +679,51 @@ Command reference:
 Activities: understanding, impact-analysis, planning, development, bugfix,
 refactor, testing, quality-gate, code-review, commit, merge-request,
 jira-update, spike, investigation, other. Weeks run Monday to Sunday.
+
+---
+
+## 17. Panels in chat (A2UI)
+
+In editors that support **MCP Apps** (VS Code with GitHub Copilot Chat, Cursor),
+the agents and skills show their results as interactive panels in the chat
+instead of long text. The panels are drawn with [A2UI](https://a2ui.org/)
+(v1.0, the Lit renderer) and follow your editor's light or dark theme.
+
+| Panel | When you see it | Buttons |
+|-------|-----------------|---------|
+| Confirmation | Before a push, an MR, a Jira comment or transition, the first edit in a repo, an install | Confirm, Request changes, Cancel |
+| Implementation plan | Checkpoint 1 (plan.md, with impact.md in a tab) | Approve plan, Request changes |
+| Quality gate | After `sdlc quality KEY`: every repo and check, failures in tabs | Fix the failures |
+| Ticket progress | When you resume a ticket: which stages are done, each file in a tab | Continue |
+| Step summary | At the end of every stage and skill: results, links, next step | Links, next step |
+| Install preview / report | Before and after `install.py` when you ask the agent to update the toolkit | Install, Cancel, Re-check |
+| Setup checklist | When the Orbit preflight stops, or when you ask about setup | Re-check, Index Orbit now |
+
+**A button is the same as typing the answer.** Confirm sends "yes", Approve
+plan sends "approve", Request changes sends your comment, all as your own chat
+message. The agent still waits for that message, so every checkpoint and
+safety rule (section 14) works exactly as before. Only *Re-check* runs
+something by itself, and it only reads.
+
+**Other editors** (Claude Code, Codex CLI, Gemini CLI, Antigravity) keep
+the text output; the `sdlc-ui` server lists no tools there.
+
+**What is installed:** the installer copies the prebuilt panel
+(`scripts/ui/sdlc-ui.html`, one self-contained file, no internet access at
+run time) and registers the local `sdlc-ui` MCP server
+(`scripts/sdlc_ui_mcp.py`) in every editor, on install and on every update.
+No Node.js is needed on your machine.
+
+**Settings:** `[ui] mode` in the team config, or for you only
+`install.py --set ui.mode=off`:
+
+- `auto` (default): panels in editors that support MCP Apps.
+- `on`: always offer the panel tools (for an editor the toolkit does not
+  recognise yet).
+- `off`: no `sdlc-ui` server; it is removed from your editors on the next install.
+
+**No panel appears?** Reload the editor window after installing, and check
+that `sdlc-ui` is running (VS Code: `MCP: List Servers`). In VS Code, MCP Apps
+need a recent version. Copilot Business or Enterprise also needs MCP servers
+allowed by your org admin.
+

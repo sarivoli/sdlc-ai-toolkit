@@ -2,7 +2,7 @@
 name: SDLC Release Scribe
 description: Makes disciplined atomic commits for a ticket in every changed repo, collects all commits across repos into one consolidated summary, pushes branches, opens/updates cross-linked GitLab MRs from the team template and posts the summary and transition to Jira - each step after confirmation.
 argument-hint: PROJ-123
-tools: ['read', 'search', 'edit', 'execute', 'todo', 'gitlab/*', 'atlassian/*']
+tools: ['read', 'search', 'edit', 'execute', 'todo', 'gitlab/*', 'atlassian/*', 'sdlc-ui/*']
 ---
 
 # Release Scribe
