@@ -237,11 +237,26 @@ class Installer:
                 if p.exists() and not self.dry:
                     shutil.rmtree(p) if p.is_dir() else p.unlink()
 
+    def orbit_mode(self, cp) -> str:
+        """local (default): stdio server on this machine; remote: hosted GitLab endpoint; off."""
+        if cp.get("orbit", "enabled", fallback="yes").lower() not in ("yes", "true", "1"):
+            return "off"
+        if cp.get("orbit", "mcp_endpoint", fallback="yes").lower() not in ("yes", "true", "1"):
+            return "off"
+        mode = cp.get("orbit", "mcp_mode", fallback="local").strip().lower()
+        return mode if mode in ("local", "remote", "off") else "local"
+
+    def orbit_local_server(self) -> dict:
+        python = sys.executable or ("py" if sys.platform == "win32" else "python3")
+        return {"type": "stdio", "command": python, "args": [str(self.home / "scripts" / "orbit_mcp.py")]}
+
     def mcp_servers(self, cp) -> dict:
         servers = self._base_mcp(cp)
-        if cp.get("orbit", "enabled", fallback="yes").lower() in ("yes", "true", "1") and \
-                cp.get("orbit", "mcp_endpoint", fallback="yes").lower() in ("yes", "true", "1"):
-            servers["gitlab-orbit"] = {"type": "http", "url": cp.get("orbit", "mcp_url", fallback="https://gitlab.com/api/v4/orbit/mcp")}
+        mode = self.orbit_mode(cp)
+        if mode == "local":
+            servers["gitlab-orbit"] = self.orbit_local_server()
+        elif mode == "remote":
+            servers["gitlab-orbit"] = {"type": "http", "url": cp.get("orbit", "mcp_url", fallback=T.ORBIT_CLOUD_URL)}
         return servers
 
     def _base_mcp(self, cp) -> dict:
@@ -259,13 +274,17 @@ class Installer:
         block = data.setdefault(top_key, {})
         added = []
         for name, conf in servers.items():
-            if name in block and block[name] != conf and name not in self.old_manifest.get(manifest_key, []):
+            if name in block and block[name] != conf and name not in self.old_manifest.get(manifest_key, []) \
+                    and not T.is_orbit_cloud(name, block[name], conf):
                 self.notes.append(f"MCP server `{name}` already exists in {path} with different settings - kept yours. "
-                                  f"The agents expect a server named `{name}` ({T.server_url(conf)}).")
+                                  f"The agents expect a server named `{name}` ({T.describe(conf)}).")
                 continue
+            if name in block and T.is_orbit_cloud(name, block[name], conf):
+                self.notes.append(f"`{name}` in {path} switched from the hosted GitLab endpoint to the local Orbit server.")
+            url = T.server_url(conf)
             for other, oconf in block.items():
-                if other != name and isinstance(oconf, dict) and T.server_url(oconf) == T.server_url(conf):
-                    self.notes.append(f"You also have `{other}` pointing at {T.server_url(conf)}. You can remove it to avoid duplicate tools.")
+                if url and other != name and isinstance(oconf, dict) and T.server_url(oconf) == url:
+                    self.notes.append(f"You also have `{other}` pointing at {url}. You can remove it to avoid duplicate tools.")
             block[name] = conf
             added.append(name)
         self._backup(path)
@@ -289,19 +308,23 @@ class Installer:
 
     def install_mcp(self, cp):
         servers = self.mcp_servers(cp)
-        self.merge_mcp(self.copilot_home / "mcp-config.json", "mcpServers", servers, "mcp_servers")
+        self.merge_mcp(self.copilot_home / "mcp-config.json", "mcpServers",
+                       {n: T.shape_server(c, "copilot-cli") for n, c in servers.items()}, "mcp_servers")
         if cp.get("mcp", "write_vscode_profile_mcp", fallback="no").lower() in ("yes", "true", "1"):
             d = self.vscode_user_dir()
             if d:
-                self.merge_mcp(d / "mcp.json", "servers", servers, "vscode_mcp_servers")
+                self.merge_mcp(d / "mcp.json", "servers",
+                               {n: T.shape_server(c, "typed", T.VSCODE_WORKSPACE_VAR) for n, c in servers.items()},
+                               "vscode_mcp_servers")
             else:
                 self.notes.append("VS Code user folder not found; skipped profile mcp.json.")
         self.manual.append(
             "Sign in to Jira and GitLab once (OAuth in your browser):\n"
             "      VS Code > Command Palette > `MCP: List Servers` > `atlassian` > Start Server > approve in browser.\n"
-            "      Repeat for `gitlab`. Trust the servers if VS Code asks.\n"
-            "      If they don't appear: run `MCP: Open User Configuration` and paste the two servers from\n"
-            f"      {(self.copilot_home / 'mcp-config.json').as_posix()} under \"servers\".")
+            "      Repeat for `gitlab`. Trust the servers if VS Code asks. (`gitlab-orbit` is local and needs no sign-in.)\n"
+            "      If they don't appear: run `MCP: Open User Configuration` and add under \"servers\":\n"
+            + "\n".join("      " + ln for ln in json.dumps(
+                {n: T.shape_server(c, "typed", T.VSCODE_WORKSPACE_VAR) for n, c in servers.items()}, indent=2).splitlines()))
 
     # ------------------------------------------------------------ other editors
     def _is_ours(self, dst: Path, owned: list) -> bool:
@@ -374,7 +397,8 @@ class Installer:
             if shape == "toml":
                 self._toml_mcp(path, servers, rec)
             else:
-                self.merge_mcp(path, key, {n: T.shape_server(c, shape) for n, c in servers.items()}, f"mcp:{tgt}")
+                self.merge_mcp(path, key, {n: T.shape_server(c, shape, spec.get("workspace_var")) for n, c in servers.items()},
+                               f"mcp:{tgt}")
             self.manifest["targets"][tgt] = rec
             self.done.append(f"{spec['label']}: {len(rec['skills'])} skills, {len(rec['agents'])} agents -> {sk_dir.parent}")
             self.manual.append(f"{spec['label']}: {spec['reload']}")
@@ -393,8 +417,8 @@ class Installer:
     def install_orbit(self, cp, root: Path):
         if cp.get("orbit", "enabled", fallback="yes").lower() not in ("yes", "true", "1"):
             return
-        if shutil.which("orbit") or shutil.which("glab"):
-            self.done.append("GitLab Orbit CLI already installed")
+        if self._orbit_cli():
+            self.done.append(f"GitLab Orbit CLI already installed ({' '.join(self._orbit_cli())})")
         elif self.dry:
             self.done.append("(dry run) would install GitLab Orbit CLI: npm install -g @gitlab/orbit")
         else:
@@ -416,10 +440,29 @@ class Installer:
             proc = subprocess.run([sys.executable, str(self.home / "scripts" / "sdlc.py"), "orbit", "index", "--", "--async"],
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env, encoding="utf-8")
             self.done.append(f"Orbit graph for workspace folder {root}: " + ("indexing started" if proc.returncode == 0 else "index not started (run `sdlc orbit index`)"))
-        self.manual.append(
-            "Orbit graphs are per workspace folder (stored in <folder>/.sdlc/orbit). When you open another product/version folder, "
-            f"run once there: `{self.sdlc_command()} orbit index` (the agents do it automatically before impact analysis). "
-            "Hosted Orbit MCP (MRs/issues/pipelines) needs Orbit turned on for your GitLab group and an OAuth sign-in on first use.")
+        mode = self.orbit_mode(cp)
+        if mode == "local":
+            self.manual.append(
+                "GitLab Orbit runs locally (no GitLab sign-in needed for it): the `gitlab-orbit` MCP server is "
+                f"`{self.home.as_posix()}/scripts/orbit_mcp.py`, which serves the code graph of the folder your editor has open "
+                "(stored in <folder>/.sdlc/orbit) and starts indexing it the first time. To check: VS Code > Command Palette > "
+                "`MCP: List Servers` > `gitlab-orbit` > Start Server, then ask Copilot to call `orbit_status`. "
+                f"To index another folder by hand run there: `{self.sdlc_command()} orbit index`.")
+        elif mode == "remote":
+            self.manual.append(
+                "Orbit graphs are per workspace folder (stored in <folder>/.sdlc/orbit). When you open another folder, "
+                f"run once there: `{self.sdlc_command()} orbit index`. The hosted `gitlab-orbit` MCP server needs Orbit turned on "
+                "for your GitLab group and an OAuth sign-in on first use.")
+
+    def _orbit_cli(self):
+        sys.path.insert(0, str(SRC / "scripts"))
+        try:
+            import sdlc
+            return sdlc.orbit_command()
+        except Exception:
+            return [p for p in (shutil.which("orbit"),) if p] or None
+        finally:
+            sys.path.pop(0)
 
     def install_hooks(self, root: Path):
         if self.args.no_hooks:

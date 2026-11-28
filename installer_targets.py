@@ -27,7 +27,9 @@ def _vscode_user_dir() -> Path:
 
 
 # agents: "md" = custom agent files, "skills" = turn toolkit agents into skills, None = skip
-# mcp: (path, top_key, shape) shape in {"url", "serverUrl", "httpUrl", "toml"}
+# mcp: (path, top_key, shape) shape in {"typed", "url", "serverUrl", "httpUrl", "toml"}
+# workspace_var: editor variable for the open folder, passed to local (stdio) servers as
+#   `--workspace <var>`; without one the server uses its working directory (the project the editor started in).
 TARGETS = {
     "copilot": {
         "label": "GitHub Copilot (VS Code)",
@@ -47,6 +49,7 @@ TARGETS = {
         "skills": HOME / ".cursor" / "skills",
         "agents": ("md", HOME / ".cursor" / "agents"),
         "mcp": (HOME / ".cursor" / "mcp.json", "mcpServers", "url"),
+        "workspace_var": "${workspaceFolder}",
         "reload": "Restart Cursor. Settings > Tools & MCP: connect `atlassian` and `gitlab`. Skills appear under `/`; agents are subagents.",
     },
     "antigravity": {
@@ -134,9 +137,26 @@ def convert_agent(path: Path, names: dict, text: str) -> tuple[str, str]:
 # --------------------------------------------------------------------------
 
 
-def shape_server(conf: dict, shape: str) -> dict:
+ORBIT_CLOUD_URL = "https://gitlab.com/api/v4/orbit/mcp"
+VSCODE_WORKSPACE_VAR = "${workspaceFolder}"
+
+
+def shape_server(conf: dict, shape: str, workspace_var: str | None = None) -> dict:
+    """Write one server in an editor's format. `conf` is {"type": "http", "url"} or
+    {"type": "stdio", "command", "args"} (a local server)."""
+    if "command" in conf:
+        args = list(conf.get("args", []))
+        if workspace_var:
+            args += ["--workspace", workspace_var]
+        if shape == "typed":
+            return {"type": "stdio", "command": conf["command"], "args": args}
+        if shape == "copilot-cli":
+            return {"type": "local", "command": conf["command"], "args": args, "tools": ["*"]}
+        if shape == "toml":
+            return {"command": conf["command"], "args": args}
+        return {"command": conf["command"], "args": args}
     url = conf.get("url")
-    if shape == "typed":
+    if shape in ("typed", "copilot-cli"):
         return {"type": "http", "url": url}
     if shape in ("url", "serverUrl", "httpUrl"):
         return {shape: url}
@@ -147,6 +167,18 @@ def server_url(conf: dict) -> str:
     return conf.get("url") or conf.get("serverUrl") or conf.get("httpUrl") or ""
 
 
+def describe(conf: dict) -> str:
+    if "command" in conf:
+        return "local: " + " ".join([conf["command"]] + [str(a) for a in conf.get("args", [])])
+    return server_url(conf)
+
+
+def is_orbit_cloud(name: str, existing, new: dict) -> bool:
+    """True when an existing `gitlab-orbit` entry is the hosted endpoint and we install the local server."""
+    return (name == "gitlab-orbit" and isinstance(existing, dict) and "command" in new
+            and server_url(existing).rstrip("/").endswith("/api/v4/orbit/mcp"))
+
+
 TOML_BEGIN = "# >>> sdlc-ai-toolkit mcp >>>"
 TOML_END = "# <<< sdlc-ai-toolkit mcp <<<"
 
@@ -154,7 +186,12 @@ TOML_END = "# <<< sdlc-ai-toolkit mcp <<<"
 def toml_block(servers: dict) -> str:
     lines = [TOML_BEGIN]
     for name, conf in servers.items():
-        lines += [f'[mcp_servers."{name}"]', f'url = "{conf["url"]}"', ""]
+        lines.append(f'[mcp_servers."{name}"]')
+        if "command" in conf:
+            lines += [f"command = {json.dumps(conf['command'])}", f"args = {json.dumps(list(conf.get('args', [])))}"]
+        else:
+            lines.append(f'url = "{conf["url"]}"')
+        lines.append("")
     lines.append(TOML_END)
     return "\n".join(lines) + "\n"
 
